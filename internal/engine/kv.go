@@ -27,9 +27,10 @@ var ErrValueTooLarge = errors.New("engine: value too large")
 // structural validation at read time.
 var ErrCorrupted = errors.New("engine: stored entry corrupted")
 
-// entryRef locates one entry inside a data file: the byte offset of
-// the entry start and its total encoded size.
+// entryRef locates one entry inside a data file: the file ID, the byte
+// offset of the entry start, and its total encoded size.
 type entryRef struct {
+	fileID uint32
 	offset int64
 	size   uint32
 }
@@ -63,7 +64,7 @@ func (e *Engine) Put(key, value []byte) error {
 	}
 
 	e.mu.Lock()
-	e.index[string(key)] = entryRef{offset: offset, size: uint32(len(buf))}
+	e.index[string(key)] = entryRef{fileID: e.activeID, offset: offset, size: uint32(len(buf))}
 	e.activeOffset += int64(len(buf))
 	e.mu.Unlock()
 	return nil
@@ -122,25 +123,30 @@ func (e *Engine) Delete(key []byte) error {
 // returning, so the bytes are on disk by the time the caller's Put is
 // acknowledged. The caller must hold writeMu.
 func (e *Engine) appendDurable(buf []byte) error {
-	n, err := e.active.Write(buf)
+	active := e.files[e.activeID]
+	n, err := active.Write(buf)
 	if err != nil {
 		return fmt.Errorf("engine: append to data file: %w", err)
 	}
 	if n != len(buf) {
 		return fmt.Errorf("engine: short append to data file: wrote %d of %d bytes", n, len(buf))
 	}
-	if err := syscall.Fdatasync(int(e.active.Fd())); err != nil {
+	if err := syscall.Fdatasync(int(active.Fd())); err != nil {
 		return fmt.Errorf("engine: fdatasync data file: %w", err)
 	}
 	return nil
 }
 
 // readEntry reads the entry located by ref and returns a copy of its
-// value. The caller must hold mu (read or write) so the active file is
-// not mutated mid-read and the index entry stays valid.
+// value. The caller must hold mu (read or write) so the index entry
+// stays valid and the active file is not mutated mid-read.
 func (e *Engine) readEntry(ref entryRef, key []byte) ([]byte, error) {
+	f, ok := e.files[ref.fileID]
+	if !ok {
+		return nil, fmt.Errorf("engine: data file %d for key %q: %w", ref.fileID, key, ErrCorrupted)
+	}
 	buf := make([]byte, ref.size)
-	if _, err := e.active.ReadAt(buf, ref.offset); err != nil {
+	if _, err := f.ReadAt(buf, ref.offset); err != nil {
 		return nil, fmt.Errorf("engine: read entry at offset %d: %w", ref.offset, err)
 	}
 

@@ -67,12 +67,14 @@ type Options struct {
 // Concurrency model: single writer, many readers. writeMu serializes
 // appends to the active data file and the index publication order that
 // decides which entry wins; mu guards the index, the closed flag, and
-// reads of the active file. Lock order is always writeMu before mu.
+// reads of the data files. Lock order is always writeMu before mu.
 type Engine struct {
 	dir      string
 	lockFile *os.File
 
-	active       *os.File
+	files    map[uint32]*os.File // open data files, keyed by file ID
+	activeID uint32              // file that receives appends; fixed after Open
+
 	activeOffset int64 // end of the active file; written only under writeMu
 
 	maxKeySize   int
@@ -87,7 +89,9 @@ type Engine struct {
 
 // Open opens the storage directory rooted at dir, creating it (and any
 // missing parents) if needed, acquires an exclusive lock on the
-// directory, and prepares the active data file for appends.
+// directory, replays all existing data files into the in-memory index
+// (truncating any torn tail), and prepares the active data file for
+// appends.
 func Open(dir string, opts Options) (*Engine, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("engine: create storage directory %q: %w", dir, err)
@@ -109,6 +113,7 @@ func Open(dir string, opts Options) (*Engine, error) {
 	eng := &Engine{
 		dir:          dir,
 		lockFile:     lockFile,
+		files:        make(map[uint32]*os.File),
 		maxKeySize:   opts.MaxKeySize,
 		maxValueSize: opts.MaxValueSize,
 		index:        make(map[string]entryRef),
@@ -120,59 +125,27 @@ func Open(dir string, opts Options) (*Engine, error) {
 		eng.maxValueSize = defaultMaxValueSize
 	}
 
-	ids, err := listDataFileIDs(dir)
-	if err != nil {
+	if err := eng.recoverFiles(); err != nil {
 		_ = eng.Close()
 		return nil, err
 	}
-	activeID := uint32(1)
-	if len(ids) > 0 {
-		activeID = ids[len(ids)-1]
+
+	// recoverFiles loaded files in ascending ID order, so the last one
+	// is the active file; a fresh directory starts at file 1.
+	eng.activeID = uint32(1)
+	for id := range eng.files {
+		if id >= eng.activeID {
+			eng.activeID = id
+		}
 	}
-	if err := eng.openActive(dir, activeID); err != nil {
-		_ = eng.Close()
-		return nil, err
+	if len(eng.files) == 0 {
+		if err := eng.createActive(eng.activeID); err != nil {
+			_ = eng.Close()
+			return nil, err
+		}
 	}
+
 	return eng, nil
-}
-
-// openActive opens (creating on first use) the data file with the
-// given ID in append mode and positions activeOffset at its end.
-// Creating a brand-new file also syncs the directory entry, so the
-// file is guaranteed to survive a crash before the first Put ack.
-func (e *Engine) openActive(dir string, id uint32) error {
-	path := filepath.Join(dir, dataFileName(id))
-	created := false
-	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-		created = true
-	} else if err != nil {
-		return fmt.Errorf("engine: stat data file %q: %w", path, err)
-	}
-
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0o644)
-	if err != nil {
-		return fmt.Errorf("engine: open data file %q: %w", path, err)
-	}
-	info, err := f.Stat()
-	if err != nil {
-		_ = f.Close()
-		return fmt.Errorf("engine: stat data file %q: %w", path, err)
-	}
-
-	e.active = f
-	e.activeOffset = info.Size()
-
-	if created {
-		if err := f.Sync(); err != nil {
-			_ = f.Close()
-			return fmt.Errorf("engine: sync new data file %q: %w", path, err)
-		}
-		if err := syncDir(dir); err != nil {
-			_ = f.Close()
-			return err
-		}
-	}
-	return nil
 }
 
 // syncDir fsyncs the directory itself so newly created file entries
@@ -237,11 +210,11 @@ func (e *Engine) Close() error {
 	e.closed = true
 
 	var firstErr error
-	if e.active != nil {
-		if err := e.active.Close(); err != nil {
-			firstErr = fmt.Errorf("engine: close data file: %w", err)
+	for id, f := range e.files {
+		if err := f.Close(); err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("engine: close data file %d: %w", id, err)
 		}
-		e.active = nil
+		delete(e.files, id)
 	}
 
 	if err := syscall.Flock(int(e.lockFile.Fd()), syscall.LOCK_UN); err != nil {
