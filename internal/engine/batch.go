@@ -136,7 +136,7 @@ func (b *Batch) Commit() error {
 
 	// One buffer for the whole batch: a single Write lands every
 	// staged entry contiguously in the active file, and a single
-	// fdatasync (inside appendDurable) covers them all.
+	// single fdatasync inside appendActive covers them all (always policy).
 	now := time.Now().UnixNano()
 	capacity := 0
 	for i := range b.ops {
@@ -158,7 +158,7 @@ func (b *Batch) Commit() error {
 		sizes = append(sizes, uint32(len(buf)-start))
 	}
 
-	if err := e.appendDurable(active.f, buf); err != nil {
+	if err := e.appendActive(active.f, buf); err != nil {
 		return err
 	}
 	e.bytesWritten.Add(logical)

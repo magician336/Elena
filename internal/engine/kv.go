@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math"
 	"os"
-	"syscall"
 	"time"
 )
 
@@ -44,8 +43,9 @@ type entryRef struct {
 }
 
 // Put stores value under key with no expiry. The entry is appended to
-// the active data file and fdatasync'ed to disk before Put returns
-// (the always sync policy: a successful Put is durable), then the
+// the active data file and made durable per the engine's sync policy
+// (under the default always policy a successful Put is durable the
+// moment it returns; see SyncPolicy for the other tiers), then the
 // in-memory index is updated so the new entry wins over any older one.
 func (e *Engine) Put(key, value []byte) error {
 	e.opsPut.Add(1)
@@ -87,7 +87,8 @@ var maxExpiryDeadline = time.Unix(0, math.MaxInt64)
 
 // putExpires is the shared write path of Put and PutWithTTL: it appends
 // one value entry whose header carries expires (0 = never expires),
-// makes it durable, and publishes it in the index.
+// makes it durable per the engine's sync policy, and publishes it in
+// the index.
 func (e *Engine) putExpires(key, value []byte, expires int64) error {
 	e.writeMu.Lock()
 	defer e.writeMu.Unlock()
@@ -112,7 +113,7 @@ func (e *Engine) putExpires(key, value []byte, expires int64) error {
 	}
 
 	buf := appendValueEntry(nil, time.Now().UnixNano(), expires, key, value)
-	if err := e.appendDurable(active.f, buf); err != nil {
+	if err := e.appendActive(active.f, buf); err != nil {
 		return err
 	}
 	e.bytesWritten.Add(uint64(len(key) + len(value)))
@@ -154,9 +155,10 @@ func (e *Engine) Get(key []byte) ([]byte, error) {
 }
 
 // Delete removes key from the engine's point of view by appending a
-// tombstone entry (durable, same always sync policy as Put) and
-// dropping the key from the index. The tombstone stays on disk until
-// a later merge reclaims it. Deleting a missing key is not an error.
+// tombstone entry (durability follows the engine's sync policy, same
+// as Put) and dropping the key from the index. The tombstone stays on
+// disk until a later merge reclaims it. Deleting a missing key is not
+// an error.
 func (e *Engine) Delete(key []byte) error {
 	e.opsDelete.Add(1)
 	if err := e.deleteKey(key); err != nil {
@@ -188,7 +190,7 @@ func (e *Engine) deleteKey(key []byte) error {
 	}
 
 	buf := appendTombstoneEntry(nil, time.Now().UnixNano(), key)
-	if err := e.appendDurable(active.f, buf); err != nil {
+	if err := e.appendActive(active.f, buf); err != nil {
 		return err
 	}
 
@@ -235,13 +237,15 @@ func (e *Engine) maybeAutoMerge() {
 	_ = e.Merge()
 }
 
-// appendDurable writes buf to the active file and fdatasyncs it before
-// returning, so the bytes are on disk by the time the caller's Put is
-// acknowledged. The caller must hold writeMu and must have captured
-// the handle under mu in the same critical section that produced the
-// append offset (a merge swaps the active file only under writeMu, so
-// the pair stays coherent).
-func (e *Engine) appendDurable(active *os.File, buf []byte) error {
+// appendActive writes buf to the active file and makes it durable
+// according to the engine's sync policy: always fdatasyncs before
+// returning (an acknowledged write is on disk), interval leaves the
+// sync to the background flusher (Close and rotation force one), none
+// never syncs (the bytes ride the OS page cache). The caller must hold
+// writeMu and must have captured the handle under mu in the same
+// critical section that produced the append offset (a merge swaps the
+// active file only under writeMu, so the pair stays coherent).
+func (e *Engine) appendActive(active *os.File, buf []byte) error {
 	n, err := active.Write(buf)
 	if err != nil {
 		return fmt.Errorf("engine: append to data file: %w", err)
@@ -249,8 +253,10 @@ func (e *Engine) appendDurable(active *os.File, buf []byte) error {
 	if n != len(buf) {
 		return fmt.Errorf("engine: short append to data file: wrote %d of %d bytes", n, len(buf))
 	}
-	if err := syscall.Fdatasync(int(active.Fd())); err != nil {
-		return fmt.Errorf("engine: fdatasync data file: %w", err)
+	if e.syncPolicy == SyncAlways {
+		if err := syncDataFile(active); err != nil {
+			return err
+		}
 	}
 	e.bytesFlushed.Add(uint64(len(buf)))
 	return nil

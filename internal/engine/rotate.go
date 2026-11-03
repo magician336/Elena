@@ -13,13 +13,18 @@ import "fmt"
 // and starts a fresh active file under the next file ID. The active
 // ID and handle are captured under mu because a concurrent merge can
 // swap the engine's file set even while this writer holds writeMu
-// (a merge takes writeMu only for its short critical sections). The
-// hint is written first, so a crash mid-rotation can leave the
-// previous file without a hint (Open falls back to scanning it) but
-// never leaves a new active file whose predecessor lacks one. The
-// file-set update happens under mu so concurrent readers never observe
-// a half-rotated engine (lock order writeMu before mu is preserved).
-// The caller must hold writeMu.
+// (a merge takes writeMu only for its short critical sections). Under
+// the interval policy the outgoing file is fdatasync'ed first: once
+// rotated away, no active-file flush will ever cover it again, and its
+// hint is published durably right after — data and hint must agree on
+// disk (always already synced every entry; none forgoes data syncs by
+// definition, and recovery tolerates a hint that outruns its data by
+// discarding the hint). The hint is written next, so a crash
+// mid-rotation can leave the previous file without a hint (Open falls
+// back to scanning it) but never leaves a new active file whose
+// predecessor lacks one. The file-set update happens under mu so
+// concurrent readers never observe a half-rotated engine (lock order
+// writeMu before mu is preserved). The caller must hold writeMu.
 func (e *Engine) rotateActive() error {
 	e.mu.RLock()
 	oldID := e.activeID
@@ -27,6 +32,11 @@ func (e *Engine) rotateActive() error {
 	e.mu.RUnlock()
 	if df == nil {
 		return fmt.Errorf("engine: active data file %d not open for rotation", oldID)
+	}
+	if e.syncPolicy == SyncInterval {
+		if err := syncDataFile(df.f); err != nil {
+			return err
+		}
 	}
 	if err := e.writeHintFile(oldID, df.f); err != nil {
 		return err

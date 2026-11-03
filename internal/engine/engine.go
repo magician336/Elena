@@ -207,6 +207,13 @@ type Engine struct {
 	mergeMu sync.Mutex
 	retired []*dataFile
 
+	// syncer is the interval policy's background flusher, non-nil only
+	// when syncPolicy == SyncInterval. Open starts it once the engine is
+	// fully constructed; Close stops it and joins it before returning.
+	// The flusher takes writeMu for each flush (see groupSyncer), so the
+	// lock order mergeMu before writeMu before mu covers it too.
+	syncer *groupSyncer
+
 	writeMu sync.Mutex
 	mu      sync.RWMutex
 	closed  bool
@@ -294,6 +301,14 @@ func Open(dir string, opts Options) (*Engine, error) {
 		}
 	}
 
+	// The engine is fully constructed; only now may the interval
+	// flusher start observing it. Earlier failure paths called Close
+	// with a nil syncer, which handles that fine.
+	if eng.syncPolicy == SyncInterval {
+		eng.syncer = newGroupSyncer(eng, eng.syncPeriod)
+		go eng.syncer.run()
+	}
+
 	return eng, nil
 }
 
@@ -348,17 +363,55 @@ func parseDataFileName(name string) (uint32, bool) {
 
 // Close releases all resources held by the Engine, including the
 // directory lock. It is safe to call Close more than once.
+//
+// Under the interval policy Close also performs the final forced
+// flush — the one moment the acknowledged-but-unsynced window is
+// guaranteed to close — and stops the background flusher, joining it
+// so that by the time Close returns the goroutine is gone.
 func (e *Engine) Close() error {
+	// Both locks are managed by hand, not defer: the flusher join at the
+	// end must happen with writeMu released, because a flusher blocked
+	// in flushOnce is waiting for exactly that lock — deferring its
+	// release past the join would deadlock the two.
 	e.writeMu.Lock()
-	defer e.writeMu.Unlock()
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	if e.closed {
+		e.mu.Unlock()
+		e.writeMu.Unlock()
 		return nil
 	}
 	e.closed = true
 
+	// Tell the flusher to stop. Its exit path touches no engine state,
+	// so the join can happen after the locks (and after every handle is
+	// closed); joining under writeMu would deadlock a flusher that is
+	// itself blocked on writeMu.
+	var flusherDone <-chan struct{}
+	if e.syncer != nil {
+		flusherDone = e.syncer.done
+		close(e.syncer.stop)
+	}
+
 	var firstErr error
+	// Final forced flush of the interval policy: with closed set and
+	// writeMu held, no append can race, so one fdatasync makes every
+	// acknowledged write of this engine durable before the handles go
+	// away. (always already synced every write; none promises nothing.)
+	if e.syncPolicy == SyncInterval {
+		if df := e.files[e.activeID]; df != nil {
+			if err := syncDataFile(df.f); err != nil && firstErr == nil {
+				firstErr = err
+			}
+		}
+	}
+	// A background flush that failed earlier is a durability regression
+	// the engine could not repair; surface it now that someone looks.
+	if e.syncer != nil {
+		if p := e.syncer.flushErr.Load(); p != nil && firstErr == nil {
+			firstErr = fmt.Errorf("engine: background flush failed earlier: %w", *p)
+		}
+	}
+
 	// The active file's contents are final now (single writer holds
 	// writeMu through Close), so publish its hint while the file handle
 	// is still open. A hint failure does not prevent the release of
@@ -391,6 +444,19 @@ func (e *Engine) Close() error {
 		if firstErr == nil {
 			firstErr = fmt.Errorf("engine: close lock file: %w", err)
 		}
+	}
+	e.mu.Unlock()
+	e.writeMu.Unlock()
+
+	// Join the stopped flusher with every lock released. It is either
+	// already exited, parked on the closed stop channel (exits
+	// immediately), or one flush behind: blocked on writeMu, which it
+	// will now acquire, observe closed, no-op, and exit. It cannot
+	// touch any handle — the flush path checks closed under the locks —
+	// so this wait cannot deadlock and cannot race the closes above.
+	// When Close returns, the flusher goroutine is gone.
+	if flusherDone != nil {
+		<-flusherDone
 	}
 	return firstErr
 }
