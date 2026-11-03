@@ -3,6 +3,8 @@ package engine_test
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -157,4 +159,53 @@ func TestReopenEmptyDirectory(t *testing.T) {
 	if _, err := reopened.Get([]byte("anything")); !errors.Is(err, engine.ErrNotFound) {
 		t.Errorf("Get on reopened empty dir err = %v, want ErrNotFound", err)
 	}
+}
+
+// A directory can hold more than one data file (rotation arrives in a
+// later ticket; recovery and read routing must already be correct for
+// it). Fixture: duplicate the single data file under the next file ID
+// by hand, then verify Open replays both files in order, serves reads
+// from the older file's entries, and appends to the newest one.
+func TestReopenMultipleDataFiles(t *testing.T) {
+	dir := t.TempDir()
+
+	eng := openEngine(t, dir)
+	if err := eng.Put([]byte("old"), []byte("from-file-1")); err != nil {
+		t.Fatalf("Put failed: %v", err)
+	}
+	if err := eng.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	first := dataFilePath(t, dir)
+	second := filepath.Join(filepath.Dir(first), "0000000002.log")
+	if err := copyFile(first, second); err != nil {
+		t.Fatalf("copy data file: %v", err)
+	}
+
+	reopened := openEngine(t, dir) // both files replayed, file 2 active
+	if err := reopened.Put([]byte("new"), []byte("from-file-2")); err != nil {
+		t.Fatalf("Put after multi-file reopen failed: %v", err)
+	}
+	if err := reopened.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	final := openEngine(t, dir)
+	defer closeEngine(t, final)
+	if got, err := final.Get([]byte("old")); err != nil || string(got) != "from-file-1" {
+		t.Errorf("Get(old) = %q, %v; want \"from-file-1\", nil", got, err)
+	}
+	if got, err := final.Get([]byte("new")); err != nil || string(got) != "from-file-2" {
+		t.Errorf("Get(new) = %q, %v; want \"from-file-2\", nil", got, err)
+	}
+}
+
+// copyFile duplicates src as dst.
+func copyFile(src, dst string) error {
+	b, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(dst, b, 0o644)
 }
