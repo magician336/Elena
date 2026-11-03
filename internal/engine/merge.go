@@ -44,12 +44,47 @@ func (e *Engine) Merge() error {
 	return e.merge()
 }
 
-// merge runs one merge; the caller holds mergeMu.
+// merge runs one merge; the caller holds mergeMu. The phases are
+// separate methods (freezeMergeSet, rewriteInto, switchToMerged) so a
+// merge can also be driven step by step where a test must interleave
+// other operations between phases.
 func (e *Engine) merge() error {
-	// ---- Phase 1: freeze the merge set, open output + successor
-	// active file. Short, under writeMu so rotation cannot race the
-	// file IDs. ----
+	frozen, ok, err := e.freezeMergeSet()
+	if err != nil || !ok {
+		return err
+	}
+
+	newRefs, flushed, err := e.rewriteInto(frozen.out, frozen.outID, frozen.merged)
+	if err != nil {
+		e.discardMergeFiles(frozen.outID)
+		return err
+	}
+
+	return e.switchToMerged(frozen, newRefs, flushed)
+}
+
+// mergeFrozen is the state Phase 1 freezes for one merge: the open
+// output file with its ID, the successor active file's ID, and the IDs
+// of every file the rewrite copies from.
+type mergeFrozen struct {
+	out          *os.File
+	outID        uint32
+	nextActiveID uint32
+	merged       []uint32
+}
+
+// freezeMergeSet is Phase 1 of the merge: freeze the merge set, open
+// the output and the successor active file. Short, under writeMu so
+// rotation cannot race the file IDs. The caller holds mergeMu. ok is
+// false when there is nothing on disk to merge (a merge would only
+// churn files); err is non-nil when the engine is closed or a file
+// cannot be created. On success every file in merged is immutable
+// until the merge finishes: appends race only with nextActiveID,
+// which no snapshot references.
+func (e *Engine) freezeMergeSet() (frozen mergeFrozen, ok bool, err error) {
 	e.writeMu.Lock()
+	defer e.writeMu.Unlock()
+
 	e.mu.RLock()
 	closed := e.closed
 	var totalEntries uint64
@@ -58,28 +93,24 @@ func (e *Engine) merge() error {
 	}
 	e.mu.RUnlock()
 	if closed {
-		e.writeMu.Unlock()
-		return ErrClosed
+		return mergeFrozen{}, false, ErrClosed
 	}
 	if totalEntries == 0 {
-		e.writeMu.Unlock()
-		return nil // nothing on disk: a merge would only churn files
+		return mergeFrozen{}, false, nil // nothing on disk: a merge would only churn files
 	}
 
 	outID := e.activeID + 1
 	nextActiveID := e.activeID + 2
 	out, err := e.openNewDataFile(outID)
 	if err != nil {
-		e.writeMu.Unlock()
-		return err
+		return mergeFrozen{}, false, err
 	}
 	nextActive, err := e.openNewDataFile(nextActiveID)
 	if err != nil {
 		_ = out.Close()
 		_ = os.Remove(filepath.Join(e.dir, dataFileName(outID)))
 		_ = syncDir(e.dir)
-		e.writeMu.Unlock()
-		return err
+		return mergeFrozen{}, false, err
 	}
 
 	merged := make([]uint32, 0, len(e.files))
@@ -92,24 +123,22 @@ func (e *Engine) merge() error {
 	e.activeID = nextActiveID
 	e.activeOffset = 0
 	e.mu.Unlock()
-	e.writeMu.Unlock()
 
-	// Every file in merged is immutable from here on: appends race
-	// only with nextActiveID, which no snapshot references.
+	return mergeFrozen{out: out, outID: outID, nextActiveID: nextActiveID, merged: merged}, true, nil
+}
 
-	newRefs, flushed, err := e.rewriteInto(out, outID, merged)
-	if err != nil {
-		e.discardMergeFiles(outID)
-		return err
-	}
-
-	// ---- Phase 3: atomic index switch. Short, under writeMu+mu: the
-	// writeMu grab keeps a concurrent append (which captured the old
-	// active handle and offset under mu alone) from racing the swap,
-	// and the mu grab keeps readers from observing a half-switched
-	// index. ----
-	mergedSet := make(map[uint32]struct{}, len(merged))
-	for _, id := range merged {
+// switchToMerged is Phases 3 and 4 of the merge: atomically switch the
+// index over to the frozen set's rewrite output, then drop the old
+// files. Phase 3 is short, under writeMu+mu: the writeMu grab keeps a
+// concurrent append (which captured the old active handle and offset
+// under mu alone) from racing the swap, and the mu grab keeps readers
+// from observing a half-switched index. Phase 4 (deleting the old
+// files) runs after the locks with nothing referencing them. The
+// caller holds mergeMu, and rewriteInto must have made frozen.out
+// durable already.
+func (e *Engine) switchToMerged(frozen mergeFrozen, newRefs map[string]entryRef, flushed uint64) error {
+	mergedSet := make(map[uint32]struct{}, len(frozen.merged))
+	for _, id := range frozen.merged {
 		mergedSet[id] = struct{}{}
 	}
 	e.writeMu.Lock()
@@ -117,7 +146,7 @@ func (e *Engine) merge() error {
 	if e.closed {
 		e.mu.Unlock()
 		e.writeMu.Unlock()
-		e.discardMergeFiles(outID, nextActiveID)
+		e.discardMergeFiles(frozen.outID, frozen.nextActiveID)
 		return ErrClosed
 	}
 	for key, ref := range e.index {
@@ -132,7 +161,7 @@ func (e *Engine) merge() error {
 			delete(e.index, key) // the entry expired before or during the rewrite
 		}
 	}
-	for _, id := range merged {
+	for _, id := range frozen.merged {
 		df := e.files[id]
 		delete(e.files, id)
 		df.retired.Store(true)
@@ -145,14 +174,14 @@ func (e *Engine) merge() error {
 			e.retired = append(e.retired, df)
 		}
 	}
-	e.files[outID].entries = uint64(len(newRefs))
-	e.files[outID].bytes = int64(flushed)
+	e.files[frozen.outID].entries = uint64(len(newRefs))
+	e.files[frozen.outID].bytes = int64(flushed)
 	e.mu.Unlock()
 	e.writeMu.Unlock()
 
 	// ---- Phase 4: the old files are unreferenced; drop them. ----
 	var firstErr error
-	for _, id := range merged {
+	for _, id := range frozen.merged {
 		if err := os.Remove(filepath.Join(e.dir, dataFileName(id))); err != nil && !os.IsNotExist(err) && firstErr == nil {
 			firstErr = fmt.Errorf("engine: merge: remove data file %d: %w", id, err)
 		}
