@@ -6,6 +6,7 @@ import (
 	"os"
 	"sync"
 	"testing"
+	"time"
 
 	"elena/internal/engine"
 )
@@ -178,4 +179,34 @@ func TestMergeRetiredHandlesDoNotLeak(t *testing.T) {
 	if after > baseline+4 {
 		t.Errorf("open fds after 60 merges = %d, baseline %d: retired handles leaked", after, baseline)
 	}
+}
+
+// Close racing a running merge must leave the directory consistent:
+// the merge either finished (its output and old files are in order)
+// or was aborted (ErrClosed, its half-written output discarded or
+// harmlessly replayable). Either way a reopen serves every
+// acknowledged write and the engine releases the directory lock.
+func TestMergeRacingCloseKeepsDirectoryReopenable(t *testing.T) {
+	dir := t.TempDir()
+	eng := openEngineWithOptions(t, dir, smallFileOptions())
+
+	// Enough data that a merge is still rewriting when Close strikes.
+	want := writeRotatedFixture(t, eng, 3000)
+
+	mergeDone := make(chan error, 1)
+	go func() { mergeDone <- eng.Merge() }()
+	// Land somewhere inside the rewrite phase; exact timing does not
+	// matter — both outcomes are legal and must be safe.
+	time.Sleep(2 * time.Millisecond)
+	if err := eng.Close(); err != nil {
+		t.Errorf("Close racing a merge failed: %v", err)
+	}
+	mergeErr := <-mergeDone
+	if mergeErr != nil && !errors.Is(mergeErr, engine.ErrClosed) {
+		t.Errorf("Merge racing Close err = %v, want nil or ErrClosed", mergeErr)
+	}
+
+	reopened := openEngineWithOptions(t, dir, smallFileOptions())
+	defer closeEngine(t, reopened)
+	assertAllReadable(t, reopened, want)
 }

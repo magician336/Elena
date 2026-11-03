@@ -169,6 +169,15 @@ func (e *Engine) merge() error {
 	return nil
 }
 
+// isClosed reports whether Close has completed. Racing merges poll
+// this between rewrite steps to bail out with ErrClosed instead of
+// surfacing raw I/O errors from handles the closer already shut.
+func (e *Engine) isClosed() bool {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.closed
+}
+
 // rewriteItem is one snapshot entry of the merge: a key, its location
 // in a now-immutable file, and that file's handle.
 type rewriteItem struct {
@@ -215,12 +224,22 @@ func (e *Engine) rewriteInto(out *os.File, outID uint32, merged []uint32) (map[s
 	var off int64
 	var flushed uint64
 	buf := make([]byte, 4096)
-	for _, it := range items {
+	for i, it := range items {
+		// Close can strike mid-rewrite (it closes every handle,
+		// including the files being read here). Check periodically and
+		// bail out with ErrClosed instead of surfacing raw I/O errors
+		// from handles the closer already shut.
+		if i%256 == 0 && e.isClosed() {
+			return nil, 0, ErrClosed
+		}
 		if uint32(cap(buf)) < it.ref.size {
 			buf = make([]byte, it.ref.size)
 		}
 		buf = buf[:it.ref.size]
 		if _, err := it.df.f.ReadAt(buf, it.ref.offset); err != nil {
+			if e.isClosed() {
+				return nil, 0, ErrClosed
+			}
 			return nil, 0, fmt.Errorf("engine: merge: read entry for key %q at offset %d: %w", it.key, it.ref.offset, err)
 		}
 		h := decodeHeader(buf)
@@ -231,6 +250,9 @@ func (e *Engine) rewriteInto(out *os.File, outID uint32, merged []uint32) (map[s
 			continue // dead: physically reclaimed by omission
 		}
 		if _, err := dataW.Write(buf); err != nil {
+			if e.isClosed() {
+				return nil, 0, ErrClosed
+			}
 			return nil, 0, fmt.Errorf("engine: merge: write entry for key %q: %w", it.key, err)
 		}
 		key := buf[entryHeaderSize : entryHeaderSize+int(h.keyLen)]
