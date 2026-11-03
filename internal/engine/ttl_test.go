@@ -19,7 +19,7 @@ import (
 // immediate Get, and expiryWait is a generous multiple of it so the
 // "expired" assertions never race the clock.
 const (
-	shortTTL  = 80 * time.Millisecond
+	shortTTL   = 80 * time.Millisecond
 	expiryWait = 200 * time.Millisecond
 )
 
