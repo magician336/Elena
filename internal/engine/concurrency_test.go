@@ -208,3 +208,81 @@ func TestConcurrentDeleteAndGet(t *testing.T) {
 	close(stop)
 	writer.Wait()
 }
+
+// Rotation must be invisible to concurrent readers: with a tiny size
+// threshold the single writer rotates the active file many times while
+// four readers keep looking up keys that live in already-rotated
+// immutable files. Seeded keys must always read back exactly; fresh
+// keys appear atomically or not at all; the run must be clean under
+// the race detector.
+func TestConcurrentReadersAcrossRotations(t *testing.T) {
+	dir := t.TempDir()
+	eng := openEngineWithOptions(t, dir, smallFileOptions())
+	defer closeEngine(t, eng)
+
+	// Seed keys spread over several already-rotated files.
+	seed := writeRotatedFixture(t, eng, 34)
+
+	const churned = 400
+	writerDone := make(chan struct{})
+	go func() {
+		defer close(writerDone)
+		for i := 0; i < churned; i++ {
+			key := []byte(fmt.Sprintf("churn-%06d", i))
+			if err := eng.Put(key, []byte(fmt.Sprintf("cv-%d", i))); err != nil {
+				t.Errorf("rotating Put(%q) failed: %v", key, err)
+				return
+			}
+		}
+	}()
+
+	var wg sync.WaitGroup
+	for r := 0; r < 4; r++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			for i := 0; i < 300; i++ {
+				// Seeded keys sit in immutable files: always exact.
+				for key, want := range seed {
+					got, err := eng.Get([]byte(key))
+					if err != nil {
+						t.Errorf("reader %d: Get(%q) across rotations err = %v", id, key, err)
+						return
+					}
+					if string(got) != want {
+						t.Errorf("reader %d: Get(%q) = %q, want exact fixture value", id, key, got)
+						return
+					}
+				}
+				// Churning keys: fully present or not yet visible.
+				n := (i + id) % churned
+				fresh := []byte(fmt.Sprintf("churn-%06d", n))
+				got, err := eng.Get(fresh)
+				if err == nil {
+					if want := fmt.Sprintf("cv-%d", n); string(got) != want {
+						t.Errorf("reader %d: Get(%q) = %q, want %q or ErrNotFound", id, fresh, got, want)
+						return
+					}
+				} else if !errors.Is(err, engine.ErrNotFound) {
+					t.Errorf("reader %d: Get(%q) err = %v, want hit or ErrNotFound", id, fresh, err)
+					return
+				}
+			}
+		}(r)
+	}
+
+	<-writerDone
+	wg.Wait()
+
+	// After the dust settles every churned key must be present.
+	for i := 0; i < churned; i++ {
+		key := []byte(fmt.Sprintf("churn-%06d", i))
+		got, err := eng.Get(key)
+		if err != nil {
+			t.Fatalf("Get(%q) after rotation churn err = %v", key, err)
+		}
+		if want := fmt.Sprintf("cv-%d", i); string(got) != want {
+			t.Errorf("Get(%q) = %q, want %q", key, got, want)
+		}
+	}
+}
