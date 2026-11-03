@@ -97,3 +97,10 @@ func valueBounds(h entryHeader) (start, end int) {
 	}
 	return start, start + int(h.valueLen)
 }
+
+// expiredAt reports whether the entry is dead at the given instant
+// (Unix nanoseconds). expires == 0 means the entry never expires; an
+// entry is expired from the instant its deadline is reached onward.
+func (h entryHeader) expiredAt(now int64) bool {
+	return h.expires != 0 && now >= h.expires
+}

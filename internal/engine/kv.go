@@ -176,28 +176,15 @@ func (e *Engine) appendDurable(buf []byte) error {
 }
 
 // readEntry reads the entry located by ref and returns a copy of its
-// value. The caller must hold mu (read or write) so the index entry
-// stays valid and the active file is not mutated mid-read.
+// value, or ErrNotFound when the entry's on-disk expiry timestamp says
+// it is dead. The expiry verdict always comes from the entry header on
+// disk, never from in-memory state, so it survives Close/Open cycles.
+// The caller must hold mu (read or write) so the index entry stays
+// valid and the active file is not mutated mid-read.
 func (e *Engine) readEntry(ref entryRef, key []byte) ([]byte, error) {
 	f, ok := e.files[ref.fileID]
 	if !ok {
 		return nil, fmt.Errorf("engine: data file %d for key %q: %w", ref.fileID, key, ErrCorrupted)
 	}
-	buf := make([]byte, ref.size)
-	if _, err := f.ReadAt(buf, ref.offset); err != nil {
-		return nil, fmt.Errorf("engine: read entry at offset %d: %w", ref.offset, err)
-	}
-
-	h := decodeHeader(buf)
-	start, end := valueBounds(h)
-	if entryHeaderSize+int(h.keyLen) > len(buf) || end > len(buf) || start > end {
-		return nil, fmt.Errorf("engine: entry at offset %d: %w", ref.offset, ErrCorrupted)
-	}
-	if entryCRC(buf) != h.crc {
-		return nil, fmt.Errorf("engine: entry at offset %d: %w", ref.offset, ErrCorrupted)
-	}
-
-	value := make([]byte, end-start)
-	copy(value, buf[start:end])
-	return value, nil
+	return readLiveEntry(f, ref, string(key))
 }
