@@ -125,11 +125,12 @@ func TestDirtyReopenTruncatesOverrunBodyTail(t *testing.T) {
 	writeFixture(t, dir, 3)
 	clean := fileSize(t, dir)
 
-	// Full header claiming keyLen=4, valueLen=1000, but no body.
+	// Full header claiming keyLen=1000, valueLen=4, but no body:
+	// the claimed lengths overrun the file end.
 	overrun := make([]byte, 28)
-	overrun[24] = 4   // keyLen
-	overrun[20] = 0xe8 // valueLen low byte: 1000
+	overrun[20] = 0xe8 // keyLen low bytes: 1000
 	overrun[21] = 0x03
+	overrun[24] = 4 // valueLen
 	appendRaw(t, dir, overrun)
 
 	assertFixtureReopens(t, dir, 3, clean)
@@ -175,7 +176,6 @@ func TestDirtyReopenTruncatesCorruptedCRCTail(t *testing.T) {
 func TestDirtyReopenThenAppendSurvivesAnotherReopen(t *testing.T) {
 	dir := t.TempDir()
 	writeFixture(t, dir, 2)
-	clean := fileSize(t, dir)
 
 	appendRaw(t, dir, []byte{0xde, 0xad, 0xbe}) // junk tail
 
@@ -195,26 +195,32 @@ func TestDirtyReopenThenAppendSurvivesAnotherReopen(t *testing.T) {
 	if got, err := final.Get([]byte("a")); err != nil || string(got) != "value" {
 		t.Errorf("Get(a) = %q, %v; want \"value\", nil", got, err)
 	}
-	_ = clean
 }
 
 // A file that contains nothing but garbage (no complete entry at all)
 // must open successfully as an empty engine.
 func TestDirtyReopenGarbageOnlyFile(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "0000000001.log"), []byte("garbage garbage garbage"), 0o644); err != nil {
-		t.Fatalf("write garbage data file: %v", err)
+
+	// Let the engine create the data file, then replace its contents
+	// with pure garbage (no valid entry anywhere).
+	eng := openEngine(t, dir)
+	if err := eng.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+	if err := os.WriteFile(dataFilePath(t, dir), []byte("garbage garbage garbage"), 0o644); err != nil {
+		t.Fatalf("overwrite data file with garbage: %v", err)
 	}
 
-	eng := openEngine(t, dir)
-	defer closeEngine(t, eng)
-	if _, err := eng.Get([]byte("anything")); !errors.Is(err, engine.ErrNotFound) {
+	reopened := openEngine(t, dir)
+	defer closeEngine(t, reopened)
+	if _, err := reopened.Get([]byte("anything")); !errors.Is(err, engine.ErrNotFound) {
 		t.Errorf("Get on garbage-only file err = %v, want ErrNotFound", err)
 	}
-	if err := eng.Put([]byte("fresh"), []byte("v")); err != nil {
+	if err := reopened.Put([]byte("fresh"), []byte("v")); err != nil {
 		t.Fatalf("Put on garbage-only file failed: %v", err)
 	}
-	if got, err := eng.Get([]byte("fresh")); err != nil || string(got) != "v" {
+	if got, err := reopened.Get([]byte("fresh")); err != nil || string(got) != "v" {
 		t.Errorf("Get(fresh) = %q, %v; want \"v\", nil", got, err)
 	}
 }
