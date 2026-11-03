@@ -52,7 +52,7 @@ func Open(dir string, opts Options) (*Engine, error) {
 		return nil, fmt.Errorf("engine: open lock file %q: %w", lockPath, err)
 	}
 	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		lockFile.Close()
+		_ = lockFile.Close()
 		if errors.Is(err, syscall.EWOULDBLOCK) {
 			return nil, fmt.Errorf("engine: open %q: %w", dir, ErrDirectoryLocked)
 		}

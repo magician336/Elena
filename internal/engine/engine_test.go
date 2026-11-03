@@ -9,6 +9,18 @@ import (
 	"elena/internal/engine"
 )
 
+// closeEngine closes eng and reports any failure through t. A nil eng
+// is tolerated so failed Open calls can be cleaned up unconditionally.
+func closeEngine(t *testing.T, eng *engine.Engine) {
+	t.Helper()
+	if eng == nil {
+		return
+	}
+	if err := eng.Close(); err != nil {
+		t.Errorf("Close() failed: %v", err)
+	}
+}
+
 // Open must create the storage directory (including missing parents) so
 // callers can point the engine at a fresh path.
 func TestOpenCreatesStorageDirectory(t *testing.T) {
@@ -18,7 +30,7 @@ func TestOpenCreatesStorageDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open(%q) failed: %v", dir, err)
 	}
-	defer eng.Close()
+	defer closeEngine(t, eng)
 
 	info, err := os.Stat(dir)
 	if err != nil {
@@ -39,14 +51,14 @@ func TestOpenSecondInstanceOnSameDirectoryFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first Open(%q) failed: %v", dir, err)
 	}
-	defer first.Close()
+	defer closeEngine(t, first)
 
 	second, err := engine.Open(dir, engine.Options{})
 	if !errors.Is(err, engine.ErrDirectoryLocked) {
 		t.Fatalf("second Open(%q) err = %v, want ErrDirectoryLocked", dir, err)
 	}
 	if second != nil {
-		second.Close()
+		closeEngine(t, second)
 		t.Error("second Open must not return an engine on failure")
 	}
 }
@@ -99,7 +111,7 @@ func TestOpenOnNonDirectoryPathFails(t *testing.T) {
 
 	eng, err := engine.Open(path, engine.Options{})
 	if err == nil {
-		eng.Close()
+		closeEngine(t, eng)
 		t.Fatal("Open on a regular file must fail")
 	}
 	if errors.Is(err, engine.ErrDirectoryLocked) {
@@ -114,11 +126,11 @@ func TestOpenOnUnwritableDirectoryFails(t *testing.T) {
 	if err := os.Chmod(dir, 0o555); err != nil {
 		t.Fatalf("chmod read-only: %v", err)
 	}
-	t.Cleanup(func() { os.Chmod(dir, 0o755) })
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
 
 	eng, err := engine.Open(dir, engine.Options{})
 	if err == nil {
-		eng.Close()
+		closeEngine(t, eng)
 		t.Fatal("Open on an unwritable directory must fail")
 	}
 	if errors.Is(err, engine.ErrDirectoryLocked) {
