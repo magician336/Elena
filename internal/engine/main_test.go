@@ -52,19 +52,54 @@ func runWriterChild() int {
 	if err != nil {
 		return fail(fmt.Errorf("open %q: %w", spec.Dir, err))
 	}
-	for _, w := range WriterDataset(spec) {
-		if err := eng.Put([]byte(w.Key), w.Value); err != nil {
-			return fail(fmt.Errorf("put %q: %w", w.Key, err))
+	if spec.BatchSize > 0 {
+		if err := runWriterChildBatches(eng, spec); err != nil {
+			return fail(err)
 		}
-		// Ack only after Put has returned.
-		if _, err := fmt.Fprintln(os.Stdout, w.Key); err != nil {
-			return fail(fmt.Errorf("ack %q: %w", w.Key, err))
+	} else {
+		for _, w := range WriterDataset(spec) {
+			if err := eng.Put([]byte(w.Key), w.Value); err != nil {
+				return fail(fmt.Errorf("put %q: %w", w.Key, err))
+			}
+			// Ack only after Put has returned.
+			if _, err := fmt.Fprintln(os.Stdout, w.Key); err != nil {
+				return fail(fmt.Errorf("ack %q: %w", w.Key, err))
+			}
 		}
 	}
 	if err := eng.Close(); err != nil {
 		return fail(fmt.Errorf("close: %w", err))
 	}
 	return 0
+}
+
+// runWriterChildBatches writes the dataset in batches of spec.BatchSize
+// entries: one Batch Commit per group, then one ack line per entry —
+// the acks print only after the whole batch is durable, so every ack
+// the parent observes implies a whole committed batch. The window
+// between batches (inside a Commit, before its acks print) is where a
+// SIGKILL leaves a torn or absent batch that recovery must resolve to
+// all-or-nothing.
+func runWriterChildBatches(eng *engine.Engine, spec WriterSpec) error {
+	dataset := WriterDataset(spec)
+	for start := 0; start < len(dataset); start += spec.BatchSize {
+		end := min(start+spec.BatchSize, len(dataset))
+		b := eng.NewBatch()
+		for _, w := range dataset[start:end] {
+			if err := b.Put([]byte(w.Key), w.Value); err != nil {
+				return fmt.Errorf("batch put %q: %w", w.Key, err)
+			}
+		}
+		if err := b.Commit(); err != nil {
+			return fmt.Errorf("batch commit %d..%d: %w", start, end, err)
+		}
+		for _, w := range dataset[start:end] {
+			if _, err := fmt.Fprintln(os.Stdout, w.Key); err != nil {
+				return fmt.Errorf("ack %q: %w", w.Key, err)
+			}
+		}
+	}
+	return nil
 }
 
 // writerSpecFromEnv decodes the WriterSpec the parent encoded into the
@@ -85,6 +120,9 @@ func writerSpecFromEnv() (WriterSpec, error) {
 	}
 	if spec.RotateEvery, err = strconv.Atoi(os.Getenv(writerRotateEveryEnv)); err != nil {
 		return spec, fmt.Errorf("bad %s: %w", writerRotateEveryEnv, err)
+	}
+	if spec.BatchSize, err = strconv.Atoi(os.Getenv(writerBatchSizeEnv)); err != nil {
+		return spec, fmt.Errorf("bad %s: %w", writerBatchSizeEnv, err)
 	}
 	if spec.Dir == "" || spec.Writes <= 0 || spec.ValueSize <= 0 {
 		return spec, fmt.Errorf("incomplete writer spec: %+v", spec)

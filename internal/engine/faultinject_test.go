@@ -57,6 +57,7 @@ const (
 	writerSeedEnv          = "ELENA_TEST_WRITER_SEED"
 	writerValueSizeEnv     = "ELENA_TEST_WRITER_VALUE_SIZE"
 	writerRotateEveryEnv   = "ELENA_TEST_WRITER_ROTATE_EVERY"
+	writerBatchSizeEnv     = "ELENA_TEST_WRITER_BATCH_SIZE"
 	skipKill9Env           = "ELENA_TEST_SKIP_KILL9"
 	writerDatasetStreamPCG = 0x656c656e61 // fixed PCG stream id ("elena"): a seed fully determines the dataset
 )
@@ -86,6 +87,16 @@ type WriterSpec struct {
 	// files, each sealed with a hint file. The kill can then land
 	// mid-rotation, mid-hint-write, or anywhere between files.
 	RotateEvery int
+
+	// BatchSize, when > 0, switches the child from single puts to batch
+	// commits: every BatchSize consecutive dataset entries go through
+	// one Batch Put + Commit, and the ack lines for those entries print
+	// only after the Commit returned. The dataset itself is unchanged,
+	// so the parent can still derive it from the seed; it just gains a
+	// batch grouping (entries [i*BatchSize, (i+1)*BatchSize) are one
+	// batch). The kill can then land mid-Commit, and the reopened
+	// directory must hold no half batch.
+	BatchSize int
 }
 
 // AckedWrite is one write of a child-writer run: its key and the exact
@@ -178,6 +189,7 @@ func startWriterChild(t *testing.T, spec WriterSpec) (*exec.Cmd, io.ReadCloser, 
 		writerSeedEnv+"="+strconv.FormatInt(spec.Seed, 10),
 		writerValueSizeEnv+"="+strconv.Itoa(spec.ValueSize),
 		writerRotateEveryEnv+"="+strconv.Itoa(spec.RotateEvery),
+		writerBatchSizeEnv+"="+strconv.Itoa(spec.BatchSize),
 	)
 	cmd.Stderr = stderr
 	t.Cleanup(func() {
