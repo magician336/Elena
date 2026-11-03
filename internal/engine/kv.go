@@ -47,6 +47,7 @@ type entryRef struct {
 // (the always sync policy: a successful Put is durable), then the
 // in-memory index is updated so the new entry wins over any older one.
 func (e *Engine) Put(key, value []byte) error {
+	e.opsPut.Add(1)
 	return e.putExpires(key, value, 0)
 }
 
@@ -63,6 +64,7 @@ func (e *Engine) PutWithTTL(key, value []byte, ttl time.Duration) error {
 	}
 	deadline := time.Now().Add(ttl)
 	if deadline.Before(maxExpiryDeadline) {
+		e.opsPutWithTTL.Add(1)
 		return e.putExpires(key, value, deadline.UnixNano())
 	}
 	return fmt.Errorf("engine: ttl %d: %w", ttl, ErrInvalidTTL)
@@ -100,6 +102,7 @@ func (e *Engine) putExpires(key, value []byte, expires int64) error {
 	if err := e.appendDurable(buf); err != nil {
 		return err
 	}
+	e.bytesWritten.Add(uint64(len(key) + len(value)))
 
 	e.mu.Lock()
 	e.index[string(key)] = entryRef{fileID: e.activeID, offset: offset, size: uint32(len(buf))}
@@ -113,6 +116,7 @@ func (e *Engine) putExpires(key, value []byte, expires int64) error {
 // read from the data file; the stored checksum is verified on the way
 // out.
 func (e *Engine) Get(key []byte) ([]byte, error) {
+	e.opsGet.Add(1)
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
@@ -131,6 +135,7 @@ func (e *Engine) Get(key []byte) ([]byte, error) {
 // dropping the key from the index. The tombstone stays on disk until
 // a later merge reclaims it. Deleting a missing key is not an error.
 func (e *Engine) Delete(key []byte) error {
+	e.opsDelete.Add(1)
 	e.writeMu.Lock()
 	defer e.writeMu.Unlock()
 
@@ -172,6 +177,7 @@ func (e *Engine) appendDurable(buf []byte) error {
 	if err := syscall.Fdatasync(int(active.Fd())); err != nil {
 		return fmt.Errorf("engine: fdatasync data file: %w", err)
 	}
+	e.bytesFlushed.Add(uint64(len(buf)))
 	return nil
 }
 

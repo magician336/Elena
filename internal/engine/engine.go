@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 )
 
@@ -95,6 +96,17 @@ type Engine struct {
 	maxDataFileSize int
 
 	index map[string]entryRef
+
+	// Cumulative observables, published through Stats. The op counters
+	// tick on every public call; the byte counters tick only when bytes
+	// are actually accepted or appended. They are atomics so Stats can
+	// read them without holding the write lock.
+	opsPut        atomic.Uint64
+	opsPutWithTTL atomic.Uint64
+	opsDelete     atomic.Uint64
+	opsGet        atomic.Uint64
+	bytesWritten  atomic.Uint64 // logical key+value bytes accepted
+	bytesFlushed  atomic.Uint64 // encoded entry bytes appended
 
 	writeMu sync.Mutex
 	mu      sync.RWMutex
