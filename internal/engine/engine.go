@@ -40,8 +40,27 @@ func dataFileName(id uint32) string {
 	return fmt.Sprintf("%010d%s", id, dataFileExt)
 }
 
-// Options configures an Engine at Open time. The zero value is valid.
-type Options struct{}
+// Default limits for key and value sizes. Keys live entirely in the
+// in-memory index, so they must stay small; Bitcask-style engines
+// shine on larger values but the value still needs a hard ceiling so
+// append buffers stay bounded. Both limits are configurable but
+// mandatory: there is no "unlimited" setting.
+const (
+	defaultMaxKeySize   = 1 << 10 // 1 KiB
+	defaultMaxValueSize = 4 << 20 // 4 MiB
+)
+
+// Options configures an Engine at Open time. The zero value is valid
+// and selects the defaults.
+type Options struct {
+	// MaxKeySize is the largest accepted key length in bytes. Values
+	// <= 0 select defaultMaxKeySize.
+	MaxKeySize int
+
+	// MaxValueSize is the largest accepted value length in bytes.
+	// Values <= 0 select defaultMaxValueSize.
+	MaxValueSize int
+}
 
 // Engine is an embedded key-value storage engine rooted at a directory.
 //
@@ -55,6 +74,9 @@ type Engine struct {
 
 	active       *os.File
 	activeOffset int64 // end of the active file; written only under writeMu
+
+	maxKeySize   int
+	maxValueSize int
 
 	index map[string]entryRef
 
@@ -85,9 +107,17 @@ func Open(dir string, opts Options) (*Engine, error) {
 	}
 
 	eng := &Engine{
-		dir:      dir,
-		lockFile: lockFile,
-		index:    make(map[string]entryRef),
+		dir:          dir,
+		lockFile:     lockFile,
+		maxKeySize:   opts.MaxKeySize,
+		maxValueSize: opts.MaxValueSize,
+		index:        make(map[string]entryRef),
+	}
+	if eng.maxKeySize <= 0 {
+		eng.maxKeySize = defaultMaxKeySize
+	}
+	if eng.maxValueSize <= 0 {
+		eng.maxValueSize = defaultMaxValueSize
 	}
 
 	ids, err := listDataFileIDs(dir)

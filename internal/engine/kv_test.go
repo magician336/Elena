@@ -101,3 +101,103 @@ func bytesOfLength(n int) []byte {
 	}
 	return b
 }
+
+// Put must reject keys and values over the configured limits with
+// distinct sentinel errors, so upper layers can rely on a hard
+// boundary instead of unbounded memory growth. Default limits apply
+// when Options leaves them unset; explicit smaller limits are honored.
+func TestPutRejectsOversizedKeyAndValue(t *testing.T) {
+	tests := []struct {
+		name    string
+		opts    engine.Options
+		key     []byte
+		value   []byte
+		wantErr error
+	}{
+		{
+			name:    "default key limit",
+			opts:    engine.Options{},
+			key:     bytesOfLength(1024 + 1),
+			value:   []byte("v"),
+			wantErr: engine.ErrKeyTooLarge,
+		},
+		{
+			name:    "default value limit",
+			opts:    engine.Options{},
+			key:     []byte("k"),
+			value:   bytesOfLength(4<<20 + 1),
+			wantErr: engine.ErrValueTooLarge,
+		},
+		{
+			name:    "custom smaller key limit",
+			opts:    engine.Options{MaxKeySize: 8},
+			key:     bytesOfLength(9),
+			value:   []byte("v"),
+			wantErr: engine.ErrKeyTooLarge,
+		},
+		{
+			name:    "custom smaller value limit",
+			opts:    engine.Options{MaxValueSize: 8},
+			key:     []byte("k"),
+			value:   bytesOfLength(9),
+			wantErr: engine.ErrValueTooLarge,
+		},
+		{
+			name:    "key at exactly the limit is accepted",
+			opts:    engine.Options{MaxKeySize: 8},
+			key:     bytesOfLength(8),
+			value:   []byte("v"),
+			wantErr: nil,
+		},
+		{
+			name:    "value at exactly the limit is accepted",
+			opts:    engine.Options{MaxValueSize: 8},
+			key:     []byte("k"),
+			value:   bytesOfLength(8),
+			wantErr: nil,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			eng, err := engine.Open(t.TempDir(), tt.opts)
+			if err != nil {
+				t.Fatalf("Open failed: %v", err)
+			}
+			defer closeEngine(t, eng)
+
+			err = eng.Put(tt.key, tt.value)
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("Put err = %v, want %v", err, tt.wantErr)
+			}
+			if tt.wantErr != nil {
+				return
+			}
+			got, err := eng.Get(tt.key)
+			if err != nil {
+				t.Fatalf("Get failed: %v", err)
+			}
+			if string(got) != string(tt.value) {
+				t.Errorf("Get = %q, want %q", got, tt.value)
+			}
+		})
+	}
+}
+
+// A rejected oversized write must leave no trace: the key stays
+// unreadable and nothing durable is appended.
+func TestPutOversizedLeavesNoTrace(t *testing.T) {
+	dir := t.TempDir()
+
+	eng, err := engine.Open(dir, engine.Options{MaxValueSize: 8})
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer closeEngine(t, eng)
+
+	if err := eng.Put([]byte("k"), bytesOfLength(9)); !errors.Is(err, engine.ErrValueTooLarge) {
+		t.Fatalf("Put oversized err = %v, want ErrValueTooLarge", err)
+	}
+	if _, err := eng.Get([]byte("k")); !errors.Is(err, engine.ErrNotFound) {
+		t.Errorf("Get after rejected Put err = %v, want ErrNotFound", err)
+	}
+}

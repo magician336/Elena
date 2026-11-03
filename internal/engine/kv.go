@@ -15,6 +15,14 @@ var ErrNotFound = errors.New("engine: key not found")
 // ErrClosed is returned by engine operations attempted after Close.
 var ErrClosed = errors.New("engine: engine is closed")
 
+// ErrKeyTooLarge is returned by Put when the key exceeds the
+// configured MaxKeySize.
+var ErrKeyTooLarge = errors.New("engine: key too large")
+
+// ErrValueTooLarge is returned by Put when the value exceeds the
+// configured MaxValueSize.
+var ErrValueTooLarge = errors.New("engine: value too large")
+
 // ErrCorrupted is returned when a stored entry fails its checksum or
 // structural validation at read time.
 var ErrCorrupted = errors.New("engine: stored entry corrupted")
@@ -37,9 +45,16 @@ func (e *Engine) Put(key, value []byte) error {
 	e.mu.RLock()
 	closed := e.closed
 	offset := e.activeOffset
+	maxKey, maxVal := e.maxKeySize, e.maxValueSize
 	e.mu.RUnlock()
 	if closed {
 		return ErrClosed
+	}
+	if len(key) > maxKey {
+		return fmt.Errorf("engine: put key of %d bytes: %w (max %d)", len(key), ErrKeyTooLarge, maxKey)
+	}
+	if len(value) > maxVal {
+		return fmt.Errorf("engine: put value of %d bytes: %w (max %d)", len(value), ErrValueTooLarge, maxVal)
 	}
 
 	buf := appendValueEntry(nil, time.Now().UnixNano(), 0, key, value)
