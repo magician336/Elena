@@ -205,3 +205,87 @@ func TestHintedAndHintlessReopenBuildSameIndex(t *testing.T) {
 		}
 	}
 }
+
+// A checksum-failing entry inside the active file (bit rot, not a torn
+// tail) makes the hint write at rotation fail: the Put whose append
+// crossed the threshold reports the error, yet the acknowledged bytes
+// are already durable and indexed — an unacknowledged write that is
+// nevertheless present is allowed; the opposite direction is not.
+// The engine stays readable, Close reports the same hint failure, and
+// the next Open recovers through the full-scan fallback.
+func TestHintWriteFailureSurfacesAsPutError(t *testing.T) {
+	dir := t.TempDir()
+	eng := openEngineWithOptions(t, dir, smallFileOptions())
+
+	// Ten small entries (43 bytes each) stay within one active file
+	// under the rotation threshold; the last one is then corrupted.
+	const base = 10
+	stable := map[string]string{}
+	for i := 0; i < base; i++ {
+		key := fmt.Sprintf("key%03d", i)
+		value := fmt.Sprintf("value%03d", i)
+		if err := eng.Put([]byte(key), []byte(value)); err != nil {
+			t.Fatalf("Put(%q) failed: %v", key, err)
+		}
+		stable[key] = value
+	}
+	flipLastByte(t, dataFilePathFor(t, dir, 1))
+
+	failedPuts := 0
+	extra := map[string]string{}
+	for i := 0; i < 8; i++ {
+		key := fmt.Sprintf("post-rot-%02d", i)
+		value := fmt.Sprintf("value-post-%02d", i)
+		err := eng.Put([]byte(key), []byte(value))
+		if err != nil {
+			failedPuts++
+			if !errors.Is(err, engine.ErrCorrupted) {
+				t.Fatalf("Put(%q) across corrupted rotation err = %v, want ErrCorrupted", key, err)
+			}
+		}
+		extra[key] = value
+	}
+	if failedPuts == 0 {
+		t.Fatal("fixture sanity: no Put hit the failing rotation; threshold assumptions drifted")
+	}
+
+	// Everything except the corrupted entry stays readable with its
+	// exact value, acknowledged or not.
+	for key, want := range stable {
+		got, err := eng.Get([]byte(key))
+		if key == fmt.Sprintf("key%03d", base-1) { // the flipped entry
+			if !errors.Is(err, engine.ErrCorrupted) {
+				t.Errorf("Get(%q) err = %v, want ErrCorrupted (flipped entry)", key, err)
+			}
+			continue
+		}
+		if err != nil || string(got) != want {
+			t.Errorf("Get(%q) = %q, %v; want exact %q", key, got, err, want)
+		}
+	}
+	for key, want := range extra {
+		got, err := eng.Get([]byte(key))
+		if err != nil || string(got) != want {
+			t.Errorf("Get(%q) = %q, %v; want exact %q (bytes are durable and indexed)", key, got, err, want)
+		}
+	}
+
+	if err := eng.Close(); err == nil {
+		t.Error("Close with a failing hint write must report the error")
+	}
+
+	// The full-scan fallback reopens the directory (and truncates the
+	// corruption at its usual cut point).
+	reopened, openErr := engine.Open(dir, engine.Options{})
+	if openErr != nil {
+		t.Fatalf("Open after hint-write failure failed: %v", openErr)
+	}
+	defer closeEngine(t, reopened)
+	for i := 0; i < base-1; i++ { // entries before the corruption survive the truncating scan
+		key := fmt.Sprintf("key%03d", i)
+		got, err := reopened.Get([]byte(key))
+		if err != nil || string(got) != stable[key] {
+			t.Errorf("Get(%q) after fallback reopen = %q, %v; want exact value", key, got, err)
+		}
+	}
+}

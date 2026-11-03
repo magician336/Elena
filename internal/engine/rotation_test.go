@@ -302,26 +302,48 @@ func hintPathFor(t *testing.T, dir string, id uint32) string {
 // A damaged hint (a crash can leave one behind) must never stop Open
 // or lose data: the hint is discarded and the data file is scanned in
 // full instead — the hint is an accelerator, not a correctness
-// dependency.
+// dependency. Every damage shape lands in the same fallback.
 func TestOpenFallsBackWhenHintCorrupted(t *testing.T) {
-	dir := t.TempDir()
-	eng := openEngineWithOptions(t, dir, smallFileOptions())
+	for _, tc := range []struct {
+		name   string
+		damage func(t *testing.T, path string)
+	}{
+		{"checksum flip", func(t *testing.T, path string) { flipLastByte(t, path) }},
+		{"truncated record tail", func(t *testing.T, path string) {
+			size := fileSizeOf(t, path)
+			if size < 4 {
+				t.Fatalf("hint %q too small to truncate", path)
+			}
+			if err := os.Truncate(path, size-3); err != nil { // cut into the last record
+				t.Fatalf("truncate hint %q: %v", path, err)
+			}
+		}},
+		{"emptied", func(t *testing.T, path string) {
+			if err := os.WriteFile(path, nil, 0o644); err != nil {
+				t.Fatalf("empty hint %q: %v", path, err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			eng := openEngineWithOptions(t, dir, smallFileOptions())
 
-	want := writeRotatedFixture(t, eng, 12)
-	if err := eng.Close(); err != nil {
-		t.Fatalf("Close failed: %v", err)
+			want := writeRotatedFixture(t, eng, 12)
+			if err := eng.Close(); err != nil {
+				t.Fatalf("Close failed: %v", err)
+			}
+			logIDs := fileIDsWithExt(t, dir, ".log")
+			if len(logIDs) < 2 {
+				t.Fatalf("fixture sanity: want >= 2 data files, got %v", logIDs)
+			}
+
+			tc.damage(t, hintPathFor(t, dir, logIDs[0]))
+
+			reopened := openEngineWithOptions(t, dir, smallFileOptions())
+			defer closeEngine(t, reopened)
+			assertAllReadable(t, reopened, want)
+		})
 	}
-	logIDs := fileIDsWithExt(t, dir, ".log")
-	if len(logIDs) < 2 {
-		t.Fatalf("fixture sanity: want >= 2 data files, got %v", logIDs)
-	}
-
-	// Corrupt one hint file's checksum payload.
-	flipLastByte(t, hintPathFor(t, dir, logIDs[0]))
-
-	reopened := openEngineWithOptions(t, dir, smallFileOptions())
-	defer closeEngine(t, reopened)
-	assertAllReadable(t, reopened, want)
 }
 
 // Entries appended after a hint was written (a hint from an earlier

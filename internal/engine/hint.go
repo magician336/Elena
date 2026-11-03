@@ -83,27 +83,10 @@ func (e *Engine) writeHintFile(id uint32) error {
 	if err != nil {
 		return fmt.Errorf("engine: stat data file %d for hint write: %w", id, err)
 	}
-	size := info.Size()
 
 	tmpPath := filepath.Join(e.dir, hintFileName(id)+".tmp")
-	tmp, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
-	if err != nil {
-		return fmt.Errorf("engine: create hint tmp %q: %w", tmpPath, err)
-	}
-
-	if err := writeHintRecords(tmp, data, size); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmpPath)
+	if err := streamHintToTmp(tmpPath, data, info.Size()); err != nil {
 		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("engine: sync hint tmp %q: %w", tmpPath, err)
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("engine: close hint tmp %q: %w", tmpPath, err)
 	}
 
 	hintPath := filepath.Join(e.dir, hintFileName(id))
@@ -111,8 +94,33 @@ func (e *Engine) writeHintFile(id uint32) error {
 		_ = os.Remove(tmpPath)
 		return fmt.Errorf("engine: publish hint %q: %w", hintPath, err)
 	}
-	if err := syncDir(e.dir); err != nil {
+	return syncDir(e.dir)
+}
+
+// streamHintToTmp creates tmpPath, streams one hint record per entry
+// of the data file into it, and syncs it; the tmp file is removed on
+// every failure path so no half-written hint lingers under the tmp
+// name.
+func streamHintToTmp(tmpPath string, data *os.File, size int64) error {
+	tmp, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	if err != nil {
+		return fmt.Errorf("engine: create hint tmp %q: %w", tmpPath, err)
+	}
+	abort := func(err error) error {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
 		return err
+	}
+
+	if err := writeHintRecords(tmp, data, size); err != nil {
+		return abort(err)
+	}
+	if err := tmp.Sync(); err != nil {
+		return abort(fmt.Errorf("engine: sync hint tmp %q: %w", tmpPath, err))
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("engine: close hint tmp %q: %w", tmpPath, err)
 	}
 	return nil
 }
@@ -202,51 +210,9 @@ func (e *Engine) loadFromHint(id uint32, dataSize int64) (covered int64, ok bool
 		return 0, false
 	}
 
-	var records []hintRecord
-	var off int64
-	header := make([]byte, hintRecordHeaderSize)
-	for off < info.Size() {
-		remaining := info.Size() - off
-		if remaining < hintRecordHeaderSize {
-			return 0, false // torn record
-		}
-		if _, err := f.ReadAt(header, off); err != nil {
-			return 0, false
-		}
-		crc := binary.LittleEndian.Uint32(header)
-		keyLen := binary.LittleEndian.Uint32(header[hintKeyLenOff:])
-		valueLen := binary.LittleEndian.Uint32(header[hintValueLenOff:])
-		entryOffset := int64(binary.LittleEndian.Uint64(header[hintOffsetOff:]))
-
-		if int64(keyLen) > int64(e.maxKeySize) {
-			return 0, false // impossible key length: garbage
-		}
-		if int64(hintRecordHeaderSize)+int64(keyLen) > remaining {
-			return 0, false // key overruns the hint file
-		}
-		key := make([]byte, keyLen)
-		if _, err := f.ReadAt(key, off+hintRecordHeaderSize); err != nil {
-			return 0, false
-		}
-		body := make([]byte, 0, hintRecordHeaderSize-4+int(keyLen))
-		body = append(body, header[4:]...)
-		body = append(body, key...)
-		if crc32.ChecksumIEEE(body) != crc {
-			return 0, false
-		}
-
-		entrySize := entrySizeFromHint(keyLen, valueLen)
-		if entryOffset < 0 || entryOffset+entrySize > dataSize {
-			return 0, false // points outside the data file: mismatched hint
-		}
-
-		records = append(records, hintRecord{
-			key:       string(key),
-			offset:    entryOffset,
-			size:      uint32(entrySize),
-			tombstone: valueLen == tombstoneValueLen,
-		})
-		off += hintRecordHeaderSize + int64(keyLen)
+	records, valid := parseHintRecords(f, info.Size(), e.maxKeySize, dataSize)
+	if !valid {
+		return 0, false
 	}
 
 	for _, r := range records {
@@ -261,4 +227,54 @@ func (e *Engine) loadFromHint(id uint32, dataSize int64) (covered int64, ok bool
 		covered = last.offset + int64(last.size)
 	}
 	return covered, true
+}
+
+// parseHintRecords decodes and validates every record of a hint file.
+// ok is false when any record is torn, checksum-failing, malformed, or
+// points outside the data file — the whole hint is then unusable.
+func parseHintRecords(f *os.File, size int64, maxKeySize int, dataSize int64) ([]hintRecord, bool) {
+	var records []hintRecord
+	var off int64
+	header := make([]byte, hintRecordHeaderSize)
+	for off < size {
+		remaining := size - off
+		if remaining < hintRecordHeaderSize {
+			return nil, false // torn record
+		}
+		if _, err := f.ReadAt(header, off); err != nil {
+			return nil, false
+		}
+		crc := binary.LittleEndian.Uint32(header)
+		keyLen := binary.LittleEndian.Uint32(header[hintKeyLenOff:])
+		valueLen := binary.LittleEndian.Uint32(header[hintValueLenOff:])
+		entryOffset := int64(binary.LittleEndian.Uint64(header[hintOffsetOff:]))
+
+		if int64(keyLen) > int64(maxKeySize) {
+			return nil, false // impossible key length: garbage
+		}
+		if int64(hintRecordHeaderSize)+int64(keyLen) > remaining {
+			return nil, false // key overruns the hint file
+		}
+		key := make([]byte, keyLen)
+		if _, err := f.ReadAt(key, off+hintRecordHeaderSize); err != nil {
+			return nil, false
+		}
+		if hintRecordCRC(header, key) != crc {
+			return nil, false
+		}
+
+		entrySize := entrySizeFromHint(keyLen, valueLen)
+		if entryOffset < 0 || entryOffset+entrySize > dataSize {
+			return nil, false // points outside the data file: mismatched hint
+		}
+
+		records = append(records, hintRecord{
+			key:       string(key),
+			offset:    entryOffset,
+			size:      uint32(entrySize),
+			tombstone: valueLen == tombstoneValueLen,
+		})
+		off += hintRecordHeaderSize + int64(keyLen)
+	}
+	return records, true
 }
