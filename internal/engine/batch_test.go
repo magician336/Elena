@@ -3,8 +3,10 @@ package engine_test
 import (
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"testing"
+	"time"
 
 	"elena/internal/engine"
 )
@@ -150,5 +152,124 @@ func TestBatchLastOpPerKeyWins(t *testing.T) {
 	}
 	if got := eng.Stats().LiveEntries; got != uint64(len(want)) {
 		t.Errorf("LiveEntries after batch = %d, want %d", got, len(want))
+	}
+}
+
+// A staged PutWithTTL behaves like its single-write counterpart: the
+// entry is readable while live and becomes invisible once its deadline
+// passes — the expiry travels in the entry header inside the batch's
+// durable append, so it survives Close/Open.
+func TestBatchPutWithTTLExpiry(t *testing.T) {
+	dir := t.TempDir()
+	eng := openEngine(t, dir)
+
+	b := eng.NewBatch()
+	if err := b.PutWithTTL([]byte("expiring"), []byte("v"), shortTTL); err != nil {
+		t.Fatalf("batch PutWithTTL failed: %v", err)
+	}
+	if err := b.Put([]byte("plain"), []byte("v")); err != nil {
+		t.Fatalf("batch Put failed: %v", err)
+	}
+	if err := b.Commit(); err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+
+	assertAllReadable(t, eng, map[string]string{"expiring": "v", "plain": "v"})
+	if err := eng.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	time.Sleep(expiryWait)
+	reopened := openEngine(t, dir)
+	defer closeEngine(t, reopened)
+	if _, err := reopened.Get([]byte("expiring")); !errors.Is(err, engine.ErrNotFound) {
+		t.Errorf("Get(expiring) after batch TTL expiry and reopen err = %v, want ErrNotFound", err)
+	}
+	if _, err := reopened.Get([]byte("plain")); err != nil {
+		t.Errorf("Get(plain) after reopen err = %v, want nil", err)
+	}
+}
+
+// Staging rejects what single writes reject, at staging time: oversized
+// keys and values, and TTLs that carry no honest meaning. A rejected op
+// leaves nothing behind — not in the batch, not on disk.
+func TestBatchStagingRejectsInvalidOps(t *testing.T) {
+	tests := []struct {
+		name    string
+		stage   func(b *engine.Batch) error
+		wantErr error
+	}{
+		{
+			name:    "oversized key",
+			stage:   func(b *engine.Batch) error { return b.Put(bytesOfLength(1024+1), []byte("v")) },
+			wantErr: engine.ErrKeyTooLarge,
+		},
+		{
+			name:    "oversized value",
+			stage:   func(b *engine.Batch) error { return b.Put([]byte("k"), bytesOfLength(4<<20+1)) },
+			wantErr: engine.ErrValueTooLarge,
+		},
+		{
+			name:    "oversized delete key",
+			stage:   func(b *engine.Batch) error { return b.Delete(bytesOfLength(1024 + 1)) },
+			wantErr: engine.ErrKeyTooLarge,
+		},
+		{
+			name:    "zero ttl",
+			stage:   func(b *engine.Batch) error { return b.PutWithTTL([]byte("k"), []byte("v"), 0) },
+			wantErr: engine.ErrInvalidTTL,
+		},
+		{
+			name:    "negative ttl",
+			stage:   func(b *engine.Batch) error { return b.PutWithTTL([]byte("k"), []byte("v"), -time.Second) },
+			wantErr: engine.ErrInvalidTTL,
+		},
+		{
+			name:    "unrepresentable ttl",
+			stage:   func(b *engine.Batch) error { return b.PutWithTTL([]byte("k"), []byte("v"), math.MaxInt64) },
+			wantErr: engine.ErrInvalidTTL,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			eng := openEngine(t, t.TempDir())
+			defer closeEngine(t, eng)
+
+			b := eng.NewBatch()
+			if err := b.Put([]byte("keep"), []byte("v")); err != nil {
+				t.Fatalf("seed batch Put failed: %v", err)
+			}
+			if err := tt.stage(b); !errors.Is(err, tt.wantErr) {
+				t.Fatalf("stage err = %v, want %v", err, tt.wantErr)
+			}
+			// The batch still holds only the valid op before it.
+			if err := b.Commit(); err != nil {
+				t.Fatalf("Commit after rejected stage failed: %v", err)
+			}
+			if _, err := eng.Get([]byte("keep")); err != nil {
+				t.Errorf("Get(keep) after rejected stage and Commit err = %v, want nil", err)
+			}
+		})
+	}
+}
+
+// Staging and Commit after Close must fail with ErrClosed, matching
+// every other public operation.
+func TestBatchAfterClose(t *testing.T) {
+	dir := t.TempDir()
+	eng := openEngine(t, dir)
+	b := eng.NewBatch()
+	if err := b.Put([]byte("k"), []byte("v")); err != nil {
+		t.Fatalf("batch Put failed: %v", err)
+	}
+	if err := eng.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	if err := b.Put([]byte("k2"), []byte("v")); !errors.Is(err, engine.ErrClosed) {
+		t.Errorf("stage after Close err = %v, want ErrClosed", err)
+	}
+	if err := b.Commit(); !errors.Is(err, engine.ErrClosed) {
+		t.Errorf("Commit after Close err = %v, want ErrClosed", err)
 	}
 }

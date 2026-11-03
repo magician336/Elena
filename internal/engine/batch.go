@@ -56,6 +56,21 @@ func (b *Batch) Put(key, value []byte) error {
 	return b.stage(key, value, 0, false)
 }
 
+// PutWithTTL stages a value entry with a time-to-live, measured from
+// this call exactly like a single PutWithTTL: the deadline is captured
+// now, travels in the entry header inside the batch's durable append,
+// and governs visibility after Commit. Key and value are copied.
+func (b *Batch) PutWithTTL(key, value []byte, ttl time.Duration) error {
+	if ttl <= 0 {
+		return fmt.Errorf("engine: ttl %d: %w", ttl, ErrInvalidTTL)
+	}
+	deadline := time.Now().Add(ttl)
+	if !deadline.Before(maxExpiryDeadline) {
+		return fmt.Errorf("engine: ttl %d: %w", ttl, ErrInvalidTTL)
+	}
+	return b.stage(key, value, deadline.UnixNano(), false)
+}
+
 // Delete stages a tombstone for key: at Commit the key disappears from
 // readers' point of view, and the tombstone entry rides in the batch's
 // single durable append. Deleting a key that does not exist is not an
