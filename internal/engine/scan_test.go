@@ -3,7 +3,10 @@
 package engine_test
 
 import (
+	"errors"
+	"fmt"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -190,5 +193,207 @@ func TestScanSkipsExpiredAndDeletedEntries(t *testing.T) {
 		if _, ok := values[key]; ok {
 			t.Errorf("Scan visited dead key %q", key)
 		}
+	}
+}
+
+// A visit function returning an error must stop the scan at that item
+// and surface the error to the caller unchanged, so callers can use it
+// for early termination.
+func TestScanVisitorErrorStopsIteration(t *testing.T) {
+	dir := t.TempDir()
+	eng := openEngine(t, dir)
+	defer closeEngine(t, eng)
+
+	scanFixture(t, eng, "a", "b", "c")
+
+	sentinel := errors.New("stop at b")
+	var visited []string
+	err := eng.Scan(engine.ScanOptions{}, func(key, _ []byte) error {
+		visited = append(visited, string(key))
+		if string(key) == "b" {
+			return sentinel
+		}
+		return nil
+	})
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("Scan err = %v, want the visitor's sentinel %v", err, sentinel)
+	}
+	if want := []string{"a", "b"}; !slices.Equal(visited, want) {
+		t.Errorf("visited keys = %q, want %q (scan must stop, not continue)", visited, want)
+	}
+}
+
+// Scan's declared concurrency semantics are snapshot-style: the item
+// set is fixed when Scan starts. Writes issued while the scan runs —
+// from inside visit or from other goroutines — neither add nor remove
+// items for the running scan: a newly Put key that sorts into the
+// unvisited range does not appear, a Deleted key still appears with
+// its snapshot value, and an overwritten key yields the value from the
+// snapshot, not the overwrite.
+func TestScanSnapshotSemanticsUnderWritesFromVisit(t *testing.T) {
+	dir := t.TempDir()
+	eng := openEngine(t, dir)
+	defer closeEngine(t, eng)
+
+	scanFixture(t, eng, "k1", "k2", "k3", "k4", "k5")
+
+	var gotKeys []string
+	values := map[string]string{}
+	err := eng.Scan(engine.ScanOptions{}, func(key, value []byte) error {
+		gotKeys = append(gotKeys, string(key))
+		values[string(key)] = string(value)
+
+		switch string(key) {
+		case "k1":
+			// Would sort between k2 and k3: must not appear later.
+			if err := eng.Put([]byte("k2x"), []byte("intruder")); err != nil {
+				t.Errorf("Put(k2x) from visit failed: %v", err)
+			}
+			// Would remove k3 from the index: must still appear later.
+			if err := eng.Delete([]byte("k3")); err != nil {
+				t.Errorf("Delete(k3) from visit failed: %v", err)
+			}
+			// Overwrites k4's value: the scan must still yield the
+			// snapshot's original value.
+			if err := eng.Put([]byte("k4"), []byte("overwritten")); err != nil {
+				t.Errorf("Put(k4) from visit failed: %v", err)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Scan failed: %v", err)
+	}
+
+	if want := []string{"k1", "k2", "k3", "k4", "k5"}; !slices.Equal(gotKeys, want) {
+		t.Errorf("Scan keys under concurrent writes = %q, want snapshot %q", gotKeys, want)
+	}
+	if got := values["k3"]; got != "v-k3" {
+		t.Errorf("deleted-during-scan k3 yielded %q, want snapshot value %q", got, "v-k3")
+	}
+	if got := values["k4"]; got != "v-k4" {
+		t.Errorf("overwritten-during-scan k4 yielded %q, want snapshot value %q", got, "v-k4")
+	}
+
+	// The writes did land for everyone else: a fresh scan sees them.
+	afterKeys, afterValues := scanAll(t, eng, engine.ScanOptions{})
+	if want := []string{"k1", "k2", "k2x", "k4", "k5"}; !slices.Equal(afterKeys, want) {
+		t.Errorf("post-write Scan keys = %q, want %q", afterKeys, want)
+	}
+	if got := afterValues["k4"]; got != "overwritten" {
+		t.Errorf("post-write Scan k4 = %q, want the overwrite", got)
+	}
+}
+
+// A nil visit function must be rejected with an error instead of
+// panicking on the first item.
+func TestScanNilVisitorRejected(t *testing.T) {
+	dir := t.TempDir()
+	eng := openEngine(t, dir)
+	defer closeEngine(t, eng)
+
+	scanFixture(t, eng, "a")
+	if err := eng.Scan(engine.ScanOptions{}, nil); err == nil {
+		t.Error("Scan with nil visit must return an error")
+	}
+}
+
+// Scans running concurrently with writers — puts, overwrites,
+// deletes, TTL writes, and the rotations they induce — must never
+// crash, never yield a half record, and must preserve the scan
+// contract on every completed pass: strictly ascending keys and, for
+// each visited key, the one canonical value that every version of that
+// key carries. Run under -race this pins the snapshot design's
+// thread-safety.
+func TestScanConcurrentWithWritesAndRotation(t *testing.T) {
+	dir := t.TempDir()
+	eng := openEngineWithOptions(t, dir, smallFileOptions())
+	defer closeEngine(t, eng)
+
+	// canonical returns the one value any write of key ever carries, so
+	// any snapshot version a scan observes is assertable.
+	canonical := func(key string) string { return "v:" + key }
+	for i := 0; i < 30; i++ {
+		key := fmt.Sprintf("seed%03d", i)
+		if err := eng.Put([]byte(key), []byte(canonical(key))); err != nil {
+			t.Fatalf("seed Put(%q) failed: %v", key, err)
+		}
+	}
+
+	stop := make(chan struct{})
+	var writers sync.WaitGroup
+	for w := 0; w < 4; w++ {
+		writers.Add(1)
+		go func(w int) {
+			defer writers.Done()
+			for i := 0; ; i++ {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				key := fmt.Sprintf("w%d-%04d", w, i%200)
+				var err error
+				switch i % 4 {
+				case 0:
+					err = eng.Put([]byte(key), []byte(canonical(key)))
+				case 1:
+					err = eng.PutWithTTL([]byte(key), []byte(canonical(key)), time.Hour)
+				case 2:
+					err = eng.PutWithTTL([]byte(key), []byte(canonical(key)), shortTTL)
+				default:
+					err = eng.Delete([]byte(key))
+				}
+				if err != nil && !errors.Is(err, engine.ErrClosed) {
+					t.Errorf("writer %d op %d failed: %v", w, i, err)
+					return
+				}
+			}
+		}(w)
+	}
+
+	for pass := 0; pass < 20; pass++ {
+		var keys []string
+		err := eng.Scan(engine.ScanOptions{}, func(key, value []byte) error {
+			if n := len(keys); n > 0 && string(key) <= keys[n-1] {
+				t.Errorf("pass %d: scan order broke at %q after %q", pass, key, keys[n-1])
+			}
+			if string(value) != canonical(string(key)) {
+				t.Errorf("pass %d: key %q yielded %q, want canonical %q", pass, key, value, canonical(string(key)))
+			}
+			keys = append(keys, string(key))
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("Scan pass %d failed: %v", pass, err)
+		}
+	}
+
+	close(stop)
+	writers.Wait()
+
+	// The engine must be fully intact afterwards: readable, scannable,
+	// and closable without error.
+	finalKeys, _ := scanAll(t, eng, engine.ScanOptions{})
+	for _, key := range finalKeys {
+		if _, err := eng.Get([]byte(key)); err != nil {
+			t.Errorf("Get(%q) after concurrent phase failed: %v", key, err)
+		}
+	}
+}
+
+// Scan on a closed engine must fail with ErrClosed instead of touching
+// released file handles.
+func TestScanAfterCloseReturnsErrClosed(t *testing.T) {
+	dir := t.TempDir()
+	eng := openEngine(t, dir)
+	scanFixture(t, eng, "a")
+	if err := eng.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	err := eng.Scan(engine.ScanOptions{}, func(_, _ []byte) error { return nil })
+	if !errors.Is(err, engine.ErrClosed) {
+		t.Errorf("Scan after Close err = %v, want ErrClosed", err)
 	}
 }
