@@ -87,13 +87,16 @@ type Stats struct {
 	// logical bytes have been written.
 	WriteAmplification float64
 
-	// OpsPut, OpsPutWithTTL, OpsDelete, OpsGet count the operations
-	// that went through the public API, successful or not (a Get that
-	// answers ErrNotFound still happened).
+	// OpsPut, OpsPutWithTTL, OpsDelete, OpsGet, OpsMerge count the
+	// operations that went through the public API, successful or not
+	// (a Get that answers ErrNotFound still happened). OpsMerge counts
+	// merges that actually ran — a no-op merge on an empty engine does
+	// not count.
 	OpsPut        uint64
 	OpsPutWithTTL uint64
 	OpsDelete     uint64
 	OpsGet        uint64
+	OpsMerge      uint64
 
 	// Files lists every data file of the directory, sorted by file ID.
 	Files []FileStats
@@ -112,6 +115,7 @@ func (e *Engine) Stats() Stats {
 		OpsPutWithTTL: e.opsPutWithTTL.Load(),
 		OpsDelete:     e.opsDelete.Load(),
 		OpsGet:        e.opsGet.Load(),
+		OpsMerge:      e.opsMerge.Load(),
 	}
 	if s.BytesWritten > 0 {
 		s.WriteAmplification = float64(s.BytesFlushed) / float64(s.BytesWritten)

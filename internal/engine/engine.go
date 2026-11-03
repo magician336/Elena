@@ -115,8 +115,16 @@ type Engine struct {
 	opsPutWithTTL atomic.Uint64
 	opsDelete     atomic.Uint64
 	opsGet        atomic.Uint64
+	opsMerge      atomic.Uint64
 	bytesWritten  atomic.Uint64 // logical key+value bytes accepted
 	bytesFlushed  atomic.Uint64 // encoded entry bytes appended
+
+	// mergeMu serializes Merge calls; retired holds data file handles a
+	// merge took out of the file set while a Scan snapshot may still be
+	// reading through them (closed at Close at the latest). Lock order:
+	// mergeMu before writeMu before mu.
+	mergeMu sync.Mutex
+	retired []*dataFile
 
 	writeMu sync.Mutex
 	mu      sync.RWMutex
@@ -264,6 +272,14 @@ func (e *Engine) Close() error {
 		}
 		delete(e.files, id)
 	}
+	for _, df := range e.retired {
+		// Already closed handles (Close is idempotent per call site
+		// because retired entries are removed once fully retired).
+		if err := df.f.Close(); err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("engine: close retired data file: %w", err)
+		}
+	}
+	e.retired = nil
 
 	if err := syscall.Flock(int(e.lockFile.Fd()), syscall.LOCK_UN); err != nil {
 		if firstErr == nil {

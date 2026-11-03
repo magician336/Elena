@@ -33,6 +33,11 @@ import (
 // hintFileExt is the extension of hint files.
 const hintFileExt = ".hint"
 
+// hintTmpSuffix is the suffix of a hint file while it is being written;
+// it is renamed into place once complete and synced. A leftover from a
+// crash is never read — it is removed at Open and at merge.
+const hintTmpSuffix = ".tmp"
+
 // hintRecordHeaderSize is the fixed-size prefix of a hint record.
 const hintRecordHeaderSize = 4 + 4 + 4 + 8
 
@@ -85,7 +90,7 @@ func (e *Engine) writeHintFile(id uint32) error {
 		return fmt.Errorf("engine: stat data file %d for hint write: %w", id, err)
 	}
 
-	tmpPath := filepath.Join(e.dir, hintFileName(id)+".tmp")
+	tmpPath := filepath.Join(e.dir, hintFileName(id)+hintTmpSuffix)
 	if err := streamHintToTmp(tmpPath, data, info.Size()); err != nil {
 		return err
 	}
@@ -134,7 +139,6 @@ func writeHintRecords(w *os.File, data *os.File, size int64) error {
 
 	var off int64
 	header := make([]byte, entryHeaderSize)
-	rec := make([]byte, hintRecordHeaderSize)
 	for off < size {
 		remaining := size - off
 		if remaining < entryHeaderSize {
@@ -158,20 +162,31 @@ func writeHintRecords(w *os.File, data *os.File, size int64) error {
 		}
 
 		key := entry[entryHeaderSize : entryHeaderSize+int(h.keyLen)]
-		binary.LittleEndian.PutUint32(rec[hintKeyLenOff:], h.keyLen)
-		binary.LittleEndian.PutUint32(rec[hintValueLenOff:], h.valueLen)
-		binary.LittleEndian.PutUint64(rec[hintOffsetOff:], uint64(off))
-		binary.LittleEndian.PutUint32(rec[0:], hintRecordCRC(rec, key))
-		if _, err := bw.Write(rec); err != nil {
-			return fmt.Errorf("engine: write hint record header: %w", err)
-		}
-		if _, err := bw.Write(key); err != nil {
-			return fmt.Errorf("engine: write hint record key: %w", err)
+		if err := writeHintRecord(bw, off, key, h.valueLen); err != nil {
+			return err
 		}
 		off += total
 	}
 	if err := bw.Flush(); err != nil {
 		return fmt.Errorf("engine: flush hint writer: %w", err)
+	}
+	return nil
+}
+
+// writeHintRecord appends one hint record to w: the fixed header (crc,
+// keyLen, valueLen, offset) followed by the key. valueLen carries the
+// entry's value length or the tombstone sentinel.
+func writeHintRecord(w *bufio.Writer, offset int64, key []byte, valueLen uint32) error {
+	rec := make([]byte, hintRecordHeaderSize)
+	binary.LittleEndian.PutUint32(rec[hintKeyLenOff:], uint32(len(key)))
+	binary.LittleEndian.PutUint32(rec[hintValueLenOff:], valueLen)
+	binary.LittleEndian.PutUint64(rec[hintOffsetOff:], uint64(offset))
+	binary.LittleEndian.PutUint32(rec[0:], hintRecordCRC(rec, key))
+	if _, err := w.Write(rec); err != nil {
+		return fmt.Errorf("engine: write hint record header: %w", err)
+	}
+	if _, err := w.Write(key); err != nil {
+		return fmt.Errorf("engine: write hint record key: %w", err)
 	}
 	return nil
 }
