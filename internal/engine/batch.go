@@ -109,14 +109,28 @@ func (b *Batch) stage(key, value []byte, expires int64, tombstone bool) error {
 }
 
 // Commit turns the staged writes into one append buffer, makes that
-// buffer durable with a single fdatasync, and publishes every staged
-// key in the index in one section — the whole batch becomes visible at
-// once. Commit clears the batch, so the Batch can be reused for the
-// next one. Committing an empty batch is a no-op.
+// buffer durable per the engine's sync policy, and publishes every
+// staged key in the index in one section — the whole batch becomes
+// visible at once. Commit clears the batch, so the Batch can be reused
+// for the next one. Committing an empty batch is a no-op. Like a
+// single write, a Commit that pushes the dead share past
+// Options.MergeDeadRatio runs a merge before it returns — checked
+// after the write lock is released, because Merge takes writeMu itself.
 func (b *Batch) Commit() error {
 	e := b.eng
 	e.writeMu.Lock()
-	defer e.writeMu.Unlock()
+	err := b.commitLocked()
+	e.writeMu.Unlock()
+	if err != nil {
+		return err
+	}
+	e.maybeAutoMerge()
+	return nil
+}
+
+// commitLocked is the body of Commit; the caller holds writeMu.
+func (b *Batch) commitLocked() error {
+	e := b.eng
 
 	e.mu.RLock()
 	closed := e.closed
@@ -136,7 +150,7 @@ func (b *Batch) Commit() error {
 
 	// One buffer for the whole batch: a single Write lands every
 	// staged entry contiguously in the active file, and a single
-	// single fdatasync inside appendActive covers them all (always policy).
+	// fdatasync inside appendActive covers them all (always policy).
 	now := time.Now().UnixNano()
 	capacity := 0
 	for i := range b.ops {
