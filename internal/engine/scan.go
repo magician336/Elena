@@ -55,6 +55,7 @@ func (e *Engine) Scan(opts ScanOptions, visit func(key, value []byte) error) err
 	if visit == nil {
 		return errors.New("engine: Scan requires a visit function")
 	}
+	e.opsScan.Add(1)
 	items, err := e.snapshotItems(opts)
 	if err != nil {
 		return err

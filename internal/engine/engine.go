@@ -174,6 +174,7 @@ type Engine struct {
 	opsPutWithTTL atomic.Uint64
 	opsDelete     atomic.Uint64
 	opsGet        atomic.Uint64
+	opsScan       atomic.Uint64
 	opsMerge      atomic.Uint64
 	bytesWritten  atomic.Uint64 // logical key+value bytes accepted
 	bytesFlushed  atomic.Uint64 // encoded entry bytes appended

@@ -225,3 +225,24 @@ func TestStatsDeadAccountingSurvivesReopen(t *testing.T) {
 			after.LiveBytes, before.LiveBytes, after.DataBytes, before.DataBytes)
 	}
 }
+
+// Scan is a public operation like the others, so Stats must count it —
+// including scans that visit nothing.
+func TestStatsCountsScans(t *testing.T) {
+	dir := t.TempDir()
+	eng := openEngineWithOptions(t, dir, engine.Options{})
+	defer closeEngine(t, eng)
+
+	mustPut(t, eng, "k", "v")
+	for i := 0; i < 3; i++ {
+		if err := eng.Scan(engine.ScanOptions{Prefix: []byte("k")}, func(_, _ []byte) error { return nil }); err != nil {
+			t.Fatalf("Scan failed: %v", err)
+		}
+		if err := eng.Scan(engine.ScanOptions{Prefix: []byte("nope")}, func(_, _ []byte) error { return nil }); err != nil {
+			t.Fatalf("empty Scan failed: %v", err)
+		}
+	}
+	if got := eng.Stats().OpsScan; got != 6 {
+		t.Errorf("OpsScan = %d, want 6 (hits and empty scans both count)", got)
+	}
+}
