@@ -3,6 +3,7 @@ package engine
 import (
 	"errors"
 	"fmt"
+	"math"
 	"syscall"
 	"time"
 )
@@ -14,6 +15,12 @@ var ErrNotFound = errors.New("engine: key not found")
 
 // ErrClosed is returned by engine operations attempted after Close.
 var ErrClosed = errors.New("engine: engine is closed")
+
+// ErrInvalidTTL is returned by PutWithTTL when the ttl is zero or
+// negative (an entry that is born expired carries no information) or so
+// large that the expiry timestamp is not representable in the entry
+// header.
+var ErrInvalidTTL = errors.New("engine: invalid ttl")
 
 // ErrKeyTooLarge is returned by Put when the key exceeds the
 // configured MaxKeySize.
@@ -35,11 +42,42 @@ type entryRef struct {
 	size   uint32
 }
 
-// Put stores value under key. The entry is appended to the active
-// data file and fdatasync'ed to disk before Put returns (the always
-// sync policy: a successful Put is durable), then the in-memory index
-// is updated so the new entry wins over any older one.
+// Put stores value under key with no expiry. The entry is appended to
+// the active data file and fdatasync'ed to disk before Put returns
+// (the always sync policy: a successful Put is durable), then the
+// in-memory index is updated so the new entry wins over any older one.
 func (e *Engine) Put(key, value []byte) error {
+	return e.putExpires(key, value, 0)
+}
+
+// PutWithTTL stores value under key with a time-to-live: once ttl has
+// elapsed since the call, the entry becomes invisible to Get and Scan —
+// exactly as if it had never been written. Visibility is decided
+// against the expiry timestamp stored in the entry header on disk, so
+// an expired entry stays invisible across Close and Open. Physical
+// reclamation of expired entries is the merge's job, not the read
+// path's.
+func (e *Engine) PutWithTTL(key, value []byte, ttl time.Duration) error {
+	if ttl <= 0 {
+		return fmt.Errorf("engine: ttl %d: %w", ttl, ErrInvalidTTL)
+	}
+	deadline := time.Now().Add(ttl)
+	if deadline.Before(maxExpiryDeadline) {
+		return e.putExpires(key, value, deadline.UnixNano())
+	}
+	return fmt.Errorf("engine: ttl %d: %w", ttl, ErrInvalidTTL)
+}
+
+// maxExpiryDeadline is the latest expiry instant the entry header can
+// represent: expires is an int64 of Unix nanoseconds, which runs out in
+// year 2262. A deadline at or beyond it cannot be stored honestly, so
+// such TTLs are rejected instead of silently wrapping.
+var maxExpiryDeadline = time.Unix(0, math.MaxInt64)
+
+// putExpires is the shared write path of Put and PutWithTTL: it appends
+// one value entry whose header carries expires (0 = never expires),
+// makes it durable, and publishes it in the index.
+func (e *Engine) putExpires(key, value []byte, expires int64) error {
 	e.writeMu.Lock()
 	defer e.writeMu.Unlock()
 
@@ -58,7 +96,7 @@ func (e *Engine) Put(key, value []byte) error {
 		return fmt.Errorf("engine: put value of %d bytes: %w (max %d)", len(value), ErrValueTooLarge, maxVal)
 	}
 
-	buf := appendValueEntry(nil, time.Now().UnixNano(), 0, key, value)
+	buf := appendValueEntry(nil, time.Now().UnixNano(), expires, key, value)
 	if err := e.appendDurable(buf); err != nil {
 		return err
 	}
