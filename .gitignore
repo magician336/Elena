@@ -1,0 +1,18 @@
+# Private workspace: keep out of the public repository history.
+.scratch/
+AGENTS.md
+.worktrees/
+docs/research/
+docs/learning/
+docs/plan/
+docs/agents/
+docs/adr/
+
+# Go build and test artifacts.
+*.test
+coverage.out
+
+# Editor and OS noise.
+.idea/
+.vscode/
+.DS_Store
