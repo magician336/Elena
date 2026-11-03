@@ -101,10 +101,7 @@ func (e *Engine) replayFile(f *os.File, id uint32, from int64) (int64, int, erro
 			return 0, 0, fmt.Errorf("engine: read header at offset %d: %w", off, err)
 		}
 		h := decodeHeader(header)
-		total := int64(entryHeaderSize) + int64(h.keyLen)
-		if h.valueLen != tombstoneValueLen {
-			total += int64(h.valueLen)
-		}
+		total := entrySizeFromHint(h.keyLen, h.valueLen)
 		if total > remaining {
 			return off, scanned, nil // impossible lengths or torn body
 		}
