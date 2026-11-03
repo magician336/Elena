@@ -139,7 +139,6 @@ func (b *Batch) commitLocked() error {
 	closed := e.closed
 	offset := e.activeOffset
 	active := e.files[e.activeID]
-	maxSize := e.maxDataFileSize
 	e.mu.RUnlock()
 	if closed {
 		return ErrClosed
@@ -183,30 +182,18 @@ func (b *Batch) commitLocked() error {
 	// One index publication: under mu, in staging order, so later ops
 	// in the batch win over earlier ones exactly as sequential single
 	// writes would.
-	e.mu.Lock()
-	off := offset
-	for i := range b.ops {
-		op := &b.ops[i]
-		size := sizes[i]
-		if op.tombstone {
-			if old, ok := e.index[op.key]; ok {
-				e.liveBytes -= uint64(old.size)
-				delete(e.index, op.key)
+	rotate := e.finishAppend(active, buf, uint64(len(b.ops)), func() {
+		off := offset
+		for i := range b.ops {
+			op := &b.ops[i]
+			if op.tombstone {
+				e.dropKey(op.key)
+			} else {
+				e.applyEntry(op.key, entryRef{fileID: e.activeID, offset: off, size: sizes[i]})
 			}
-		} else {
-			if old, ok := e.index[op.key]; ok {
-				e.liveBytes -= uint64(old.size)
-			}
-			e.index[op.key] = entryRef{fileID: e.activeID, offset: off, size: size}
-			e.liveBytes += uint64(size)
+			off += int64(sizes[i])
 		}
-		off += int64(size)
-	}
-	active.entries += uint64(len(b.ops))
-	active.bytes += int64(len(buf))
-	e.activeOffset += int64(len(buf))
-	rotate := e.activeOffset > int64(maxSize)
-	e.mu.Unlock()
+	})
 
 	b.ops = b.ops[:0] // the batch is spent; reuse starts empty
 	if rotate {

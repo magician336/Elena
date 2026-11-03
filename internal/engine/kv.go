@@ -105,7 +105,7 @@ func (e *Engine) putExpires(key, value []byte, expires int64) error {
 	closed := e.closed
 	offset := e.activeOffset
 	active := e.files[e.activeID]
-	maxKey, maxVal, maxSize := e.maxKeySize, e.maxValueSize, e.maxDataFileSize
+	maxKey, maxVal := e.maxKeySize, e.maxValueSize
 	e.mu.RUnlock()
 	if closed {
 		return ErrClosed
@@ -126,17 +126,9 @@ func (e *Engine) putExpires(key, value []byte, expires int64) error {
 	}
 	e.bytesWritten.Add(uint64(len(key) + len(value)))
 
-	e.mu.Lock()
-	if old, ok := e.index[string(key)]; ok {
-		e.liveBytes -= uint64(old.size)
-	}
-	e.index[string(key)] = entryRef{fileID: e.activeID, offset: offset, size: uint32(len(buf))}
-	e.liveBytes += uint64(len(buf))
-	active.entries++
-	active.bytes += int64(len(buf))
-	e.activeOffset += int64(len(buf))
-	rotate := e.activeOffset > int64(maxSize)
-	e.mu.Unlock()
+	rotate := e.finishAppend(active, buf, 1, func() {
+		e.applyEntry(string(key), entryRef{fileID: e.activeID, offset: offset, size: uint32(len(buf))})
+	})
 	if rotate {
 		return e.rotateActive()
 	}
@@ -185,7 +177,7 @@ func (e *Engine) deleteKey(key []byte) error {
 	e.mu.RLock()
 	closed := e.closed
 	active := e.files[e.activeID]
-	maxKey, maxSize := e.maxKeySize, e.maxDataFileSize
+	maxKey := e.maxKeySize
 	e.mu.RUnlock()
 	if closed {
 		return ErrClosed
@@ -202,16 +194,9 @@ func (e *Engine) deleteKey(key []byte) error {
 		return err
 	}
 
-	e.mu.Lock()
-	if old, ok := e.index[string(key)]; ok {
-		e.liveBytes -= uint64(old.size)
-		delete(e.index, string(key))
-	}
-	active.entries++
-	active.bytes += int64(len(buf))
-	e.activeOffset += int64(len(buf))
-	rotate := e.activeOffset > int64(maxSize)
-	e.mu.Unlock()
+	rotate := e.finishAppend(active, buf, 1, func() {
+		e.dropKey(string(key))
+	})
 	if rotate {
 		return e.rotateActive()
 	}
@@ -268,6 +253,28 @@ func (e *Engine) appendActive(active *os.File, buf []byte) error {
 	}
 	e.bytesFlushed.Add(uint64(len(buf)))
 	return nil
+}
+
+// finishAppend is the critical section every write path runs once its
+// bytes are durable in the active file: under mu it publishes the
+// appended entries in the index, keeps the per-file and append-offset
+// accounting exact, and reports whether the active file has outgrown
+// Options.MaxDataFileSize. publish runs with mu held — it may call
+// applyEntry/dropKey directly and must apply the appended entries in
+// append order, so later entries win exactly as sequential single
+// writes would. The caller holds writeMu, passes the active data file
+// it captured earlier and the number of entries buf holds; acting on a
+// true return (rotation) is the caller's job — under writeMu, after
+// mu has been released here.
+func (e *Engine) finishAppend(active *dataFile, buf []byte, entries uint64, publish func()) bool {
+	e.mu.Lock()
+	publish()
+	active.entries += entries
+	active.bytes += int64(len(buf))
+	e.activeOffset += int64(len(buf))
+	rotate := e.activeOffset > int64(e.maxDataFileSize)
+	e.mu.Unlock()
+	return rotate
 }
 
 // readEntry reads the entry located by ref and returns a copy of its
