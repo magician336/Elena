@@ -87,6 +87,37 @@ func (e *Engine) Get(key []byte) ([]byte, error) {
 	return e.readEntry(ref, key)
 }
 
+// Delete removes key from the engine's point of view by appending a
+// tombstone entry (durable, same always sync policy as Put) and
+// dropping the key from the index. The tombstone stays on disk until
+// a later merge reclaims it. Deleting a missing key is not an error.
+func (e *Engine) Delete(key []byte) error {
+	e.writeMu.Lock()
+	defer e.writeMu.Unlock()
+
+	e.mu.RLock()
+	closed := e.closed
+	maxKey := e.maxKeySize
+	e.mu.RUnlock()
+	if closed {
+		return ErrClosed
+	}
+	if len(key) > maxKey {
+		return fmt.Errorf("engine: delete key of %d bytes: %w (max %d)", len(key), ErrKeyTooLarge, maxKey)
+	}
+
+	buf := appendTombstoneEntry(nil, time.Now().UnixNano(), key)
+	if err := e.appendDurable(buf); err != nil {
+		return err
+	}
+
+	e.mu.Lock()
+	delete(e.index, string(key))
+	e.activeOffset += int64(len(buf))
+	e.mu.Unlock()
+	return nil
+}
+
 // appendDurable writes buf to the active file and fdatasyncs it before
 // returning, so the bytes are on disk by the time the caller's Put is
 // acknowledged. The caller must hold writeMu.
