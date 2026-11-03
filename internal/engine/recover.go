@@ -6,15 +6,15 @@ import (
 	"path/filepath"
 )
 
-// recoverFiles loads every data file found in the engine directory:
-// each file is scanned from the start, its entries are applied to the
-// index in order (puts set the key, tombstones clear it), and a torn
-// or corrupted tail — the remains of a crash mid-append — is
-// truncated so the file ends on its last complete entry.
-//
-// This is the only index-building path: Open always goes through it.
-// A later ticket adds hint files as an acceleration; correctness never
-// depends on them.
+// recoverFiles loads every data file found in the engine directory.
+// Per file, a valid hint file is preferred: its records rebuild the
+// index without reading the data file. Whatever the hint does not
+// cover — a missing hint, or bytes appended after the hint was
+// written — is rebuilt by scanning the data file itself, applying
+// entries in order (puts set the key, tombstones clear it) and
+// truncating a torn or corrupted tail, the remains of a crash
+// mid-append. Hints are accelerators: correctness never depends on
+// them, only the scan is authoritative.
 func (e *Engine) recoverFiles() error {
 	ids, err := listDataFileIDs(e.dir)
 	if err != nil {
@@ -29,7 +29,8 @@ func (e *Engine) recoverFiles() error {
 }
 
 // loadDataFile opens one existing data file, replays it into the
-// index, truncates an incomplete tail if present, and keeps the file
+// index (hint records first, then a scan of whatever they do not
+// cover), truncates an incomplete tail if present, and keeps the file
 // open for reads.
 func (e *Engine) loadDataFile(id uint32) error {
 	path := filepath.Join(e.dir, dataFileName(id))
@@ -38,17 +39,23 @@ func (e *Engine) loadDataFile(id uint32) error {
 		return fmt.Errorf("engine: open data file %q: %w", path, err)
 	}
 
-	cleanOffset, err := e.replayFile(f, id)
-	if err != nil {
-		_ = f.Close()
-		return err
-	}
-
 	info, err := f.Stat()
 	if err != nil {
 		_ = f.Close()
 		return fmt.Errorf("engine: stat data file %q: %w", path, err)
 	}
+
+	covered, hinted := e.loadFromHint(id, info.Size())
+	if !hinted {
+		covered = 0
+	}
+
+	cleanOffset, err := e.replayFile(f, id, covered)
+	if err != nil {
+		_ = f.Close()
+		return err
+	}
+
 	if info.Size() != cleanOffset {
 		// The tail holds a torn or corrupted entry (a crash mid-append
 		// was observed here). Drop it and make the truncation durable
@@ -70,18 +77,18 @@ func (e *Engine) loadDataFile(id uint32) error {
 	return nil
 }
 
-// replayFile scans f from the start, validating and applying every
+// replayFile scans f starting at from, validating and applying every
 // complete entry to the index, and returns the offset of the first
 // byte not covered by a complete valid entry. That offset equals the
 // file size when the tail is clean.
-func (e *Engine) replayFile(f *os.File, id uint32) (int64, error) {
+func (e *Engine) replayFile(f *os.File, id uint32, from int64) (int64, error) {
 	info, err := f.Stat()
 	if err != nil {
 		return 0, fmt.Errorf("engine: stat data file: %w", err)
 	}
 	size := info.Size()
 
-	var off int64
+	off := from
 	header := make([]byte, entryHeaderSize)
 	for off < size {
 		remaining := size - off

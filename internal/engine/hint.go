@@ -166,3 +166,99 @@ func writeHintRecords(w *os.File, data *os.File, size int64) error {
 	}
 	return nil
 }
+
+// hintRecord is one decoded hint record awaiting application to the
+// index. Records are validated in full before any of them is applied,
+// so a corrupt hint can never leave a half-applied index behind.
+type hintRecord struct {
+	key       string
+	offset    int64
+	size      uint32
+	tombstone bool
+}
+
+// loadFromHint reads the hint file for data file id and, when every
+// record validates, applies the records to the index in order and
+// returns the data-file offset the hint covers (the end of its last
+// record's entry). The caller must then scan the data file from that
+// offset onward — normally nothing, but a hint written at an earlier
+// Close leaves the bytes appended after it to the scan, and a torn
+// tail there is truncated as usual.
+//
+// ok is false whenever the hint cannot be trusted: missing, empty,
+// structurally invalid, checksum-failing, or pointing outside the data
+// file. A hint never raises an error — it is an accelerator, not a
+// correctness dependency, so every failure mode falls back to scanning
+// the data file from offset 0.
+func (e *Engine) loadFromHint(id uint32, dataSize int64) (covered int64, ok bool) {
+	f, err := os.Open(filepath.Join(e.dir, hintFileName(id)))
+	if err != nil {
+		return 0, false
+	}
+	defer func() { _ = f.Close() }()
+
+	info, err := f.Stat()
+	if err != nil || info.Size() == 0 {
+		return 0, false
+	}
+
+	var records []hintRecord
+	var off int64
+	header := make([]byte, hintRecordHeaderSize)
+	for off < info.Size() {
+		remaining := info.Size() - off
+		if remaining < hintRecordHeaderSize {
+			return 0, false // torn record
+		}
+		if _, err := f.ReadAt(header, off); err != nil {
+			return 0, false
+		}
+		crc := binary.LittleEndian.Uint32(header)
+		keyLen := binary.LittleEndian.Uint32(header[hintKeyLenOff:])
+		valueLen := binary.LittleEndian.Uint32(header[hintValueLenOff:])
+		entryOffset := int64(binary.LittleEndian.Uint64(header[hintOffsetOff:]))
+
+		if int64(keyLen) > int64(e.maxKeySize) {
+			return 0, false // impossible key length: garbage
+		}
+		if int64(hintRecordHeaderSize)+int64(keyLen) > remaining {
+			return 0, false // key overruns the hint file
+		}
+		key := make([]byte, keyLen)
+		if _, err := f.ReadAt(key, off+hintRecordHeaderSize); err != nil {
+			return 0, false
+		}
+		body := make([]byte, 0, hintRecordHeaderSize-4+int(keyLen))
+		body = append(body, header[4:]...)
+		body = append(body, key...)
+		if crc32.ChecksumIEEE(body) != crc {
+			return 0, false
+		}
+
+		entrySize := entrySizeFromHint(keyLen, valueLen)
+		if entryOffset < 0 || entryOffset+entrySize > dataSize {
+			return 0, false // points outside the data file: mismatched hint
+		}
+
+		records = append(records, hintRecord{
+			key:       string(key),
+			offset:    entryOffset,
+			size:      uint32(entrySize),
+			tombstone: valueLen == tombstoneValueLen,
+		})
+		off += hintRecordHeaderSize + int64(keyLen)
+	}
+
+	for _, r := range records {
+		if r.tombstone {
+			delete(e.index, r.key)
+		} else {
+			e.index[r.key] = entryRef{fileID: id, offset: r.offset, size: r.size}
+		}
+	}
+	if n := len(records); n > 0 {
+		last := records[n-1]
+		covered = last.offset + int64(last.size)
+	}
+	return covered, true
+}
