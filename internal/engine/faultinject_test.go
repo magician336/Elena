@@ -58,6 +58,8 @@ const (
 	writerValueSizeEnv     = "ELENA_TEST_WRITER_VALUE_SIZE"
 	writerRotateEveryEnv   = "ELENA_TEST_WRITER_ROTATE_EVERY"
 	writerBatchSizeEnv     = "ELENA_TEST_WRITER_BATCH_SIZE"
+	writerSyncPolicyEnv    = "ELENA_TEST_WRITER_SYNC"
+	writerSyncPeriodMsEnv  = "ELENA_TEST_WRITER_SYNC_PERIOD_MS"
 	skipKill9Env           = "ELENA_TEST_SKIP_KILL9"
 	writerDatasetStreamPCG = 0x656c656e61 // fixed PCG stream id ("elena"): a seed fully determines the dataset
 )
@@ -97,6 +99,21 @@ type WriterSpec struct {
 	// batch). The kill can then land mid-Commit, and the reopened
 	// directory must hold no half batch.
 	BatchSize int
+
+	// SyncPolicy, when non-empty, opens the child's engine with that
+	// sync policy tier ("always", "interval", or "none") instead of the
+	// default always. The kill then exercises that tier's crash
+	// behavior: an ack line still means "the call returned", but under
+	// interval/none it no longer implies the write was fdatasync'ed —
+	// the assertions of tests using this field are process-crash
+	// assertions (the page cache outlives SIGKILL), never power-loss
+	// ones.
+	SyncPolicy string
+
+	// SyncPeriodMs sets the child engine's Options.SyncPeriod in
+	// milliseconds when SyncPolicy is "interval". <= 0 keeps the
+	// engine default.
+	SyncPeriodMs int
 }
 
 // AckedWrite is one write of a child-writer run: its key and the exact
@@ -190,6 +207,8 @@ func startWriterChild(t *testing.T, spec WriterSpec) (*exec.Cmd, io.ReadCloser, 
 		writerValueSizeEnv+"="+strconv.Itoa(spec.ValueSize),
 		writerRotateEveryEnv+"="+strconv.Itoa(spec.RotateEvery),
 		writerBatchSizeEnv+"="+strconv.Itoa(spec.BatchSize),
+		writerSyncPolicyEnv+"="+spec.SyncPolicy,
+		writerSyncPeriodMsEnv+"="+strconv.Itoa(spec.SyncPeriodMs),
 	)
 	cmd.Stderr = stderr
 	t.Cleanup(func() {

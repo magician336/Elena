@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"testing"
+	"time"
 
 	"elena/internal/engine"
 )
@@ -27,9 +28,12 @@ func TestMain(m *testing.M) {
 // from the environment, put every dataset entry through the public
 // engine API, and print one ack line to stdout per Put that has
 // already returned. The ack is strictly line-buffered and unordered
-// with nothing: when the parent reads the line, the Put is durable per
-// the engine's always-sync policy. All failures go to stderr with a
-// non-zero exit so the parent reports the child stderr verbatim.
+// with nothing: an ack means "the call returned", so under the default
+// always policy the write is durable when the parent reads the line;
+// under interval/none the durability semantics are the tier's own (the
+// tests that use those tiers assert process-crash survival, not
+// power-loss durability). All failures go to stderr with a non-zero
+// exit so the parent reports the child stderr verbatim.
 func runWriterChild() int {
 	fail := func(err error) int {
 		_, _ = fmt.Fprintln(os.Stderr, "writer child:", err)
@@ -42,6 +46,21 @@ func runWriterChild() int {
 	}
 
 	opts := engine.Options{}
+	switch spec.SyncPolicy {
+	case "":
+		// default: always
+	case "always":
+		opts.SyncPolicy = engine.SyncAlways
+	case "interval":
+		opts.SyncPolicy = engine.SyncInterval
+		if spec.SyncPeriodMs > 0 {
+			opts.SyncPeriod = time.Duration(spec.SyncPeriodMs) * time.Millisecond
+		}
+	case "none":
+		opts.SyncPolicy = engine.SyncNone
+	default:
+		return fail(fmt.Errorf("unknown sync policy %q", spec.SyncPolicy))
+	}
 	if spec.RotateEvery > 0 {
 		// Real engine rotation: size the threshold so the active file
 		// turns roughly every RotateEvery puts (the dataset's entries
@@ -123,6 +142,10 @@ func writerSpecFromEnv() (WriterSpec, error) {
 	}
 	if spec.BatchSize, err = strconv.Atoi(os.Getenv(writerBatchSizeEnv)); err != nil {
 		return spec, fmt.Errorf("bad %s: %w", writerBatchSizeEnv, err)
+	}
+	spec.SyncPolicy = os.Getenv(writerSyncPolicyEnv)
+	if spec.SyncPeriodMs, err = strconv.Atoi(os.Getenv(writerSyncPeriodMsEnv)); err != nil {
+		return spec, fmt.Errorf("bad %s: %w", writerSyncPeriodMsEnv, err)
 	}
 	if spec.Dir == "" || spec.Writes <= 0 || spec.ValueSize <= 0 {
 		return spec, fmt.Errorf("incomplete writer spec: %+v", spec)
