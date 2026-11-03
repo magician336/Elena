@@ -228,6 +228,14 @@ func (e *Engine) Close() error {
 	e.closed = true
 
 	var firstErr error
+	// The active file's contents are final now (single writer holds
+	// writeMu through Close), so publish its hint while the file handle
+	// is still open. A hint failure does not prevent the release of
+	// resources; Open falls back to scanning the data file.
+	if err := e.writeHintFile(e.activeID); err != nil && firstErr == nil {
+		firstErr = err
+	}
+
 	for id, f := range e.files {
 		if err := f.Close(); err != nil && firstErr == nil {
 			firstErr = fmt.Errorf("engine: close data file %d: %w", id, err)

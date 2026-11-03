@@ -21,11 +21,17 @@ func (e *Engine) rotateIfDue() error {
 }
 
 // rotateActive turns the current active file into an immutable file
-// and starts a fresh active file under the next file ID. The file-set
-// update happens under mu so concurrent readers never observe a
-// half-rotated engine (lock order writeMu before mu is preserved).
-// The caller must hold writeMu.
+// and starts a fresh active file under the next file ID. The hint is
+// written first, so a crash mid-rotation can leave the previous file
+// without a hint (Open falls back to scanning it) but never leaves a
+// new active file whose predecessor lacks one. The file-set update
+// happens under mu so concurrent readers never observe a half-rotated
+// engine (lock order writeMu before mu is preserved). The caller must
+// hold writeMu.
 func (e *Engine) rotateActive() error {
+	if err := e.writeHintFile(e.activeID); err != nil {
+		return err
+	}
 	next := e.activeID + 1
 	f, err := e.openNewDataFile(next)
 	if err != nil {

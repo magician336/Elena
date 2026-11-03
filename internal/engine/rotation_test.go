@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -105,4 +107,92 @@ func countDataFilesIn(t *testing.T, dir string) int {
 		}
 	}
 	return n
+}
+
+// fileIDsWithExt returns the sorted numeric file IDs of the files in
+// dir whose name ends with ext (e.g. ".log" or ".hint").
+func fileIDsWithExt(t *testing.T, dir, ext string) []uint32 {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read dir %q: %v", dir, err)
+	}
+	var ids []uint32
+	for _, e := range entries {
+		name := e.Name()
+		if filepath.Ext(name) != ext {
+			continue
+		}
+		id, err := strconv.ParseUint(strings.TrimSuffix(name, ext), 10, 32)
+		if err != nil {
+			t.Fatalf("parse file ID from %q: %v", name, err)
+		}
+		ids = append(ids, uint32(id))
+	}
+	slices.Sort(ids)
+	return ids
+}
+
+// hintFilesFor returns the subset of data-file IDs that have a hint
+// file in dir.
+func hintFilesFor(t *testing.T, dir string) map[uint32]bool {
+	t.Helper()
+	withHint := map[uint32]bool{}
+	for _, id := range fileIDsWithExt(t, dir, ".hint") {
+		withHint[id] = true
+	}
+	return withHint
+}
+
+// Rotation must leave a hint file behind for every immutable data
+// file: the rotation point is when the file's contents stop changing,
+// so a compact key-to-position map can be written durably alongside
+// it. The highest-ID file is the active one (its hint arrives at
+// Close), so only the lower IDs are asserted here.
+func TestRotationWritesHintForEachImmutableFile(t *testing.T) {
+	dir := t.TempDir()
+	eng := openEngineWithOptions(t, dir, smallFileOptions())
+
+	writeRotatedFixture(t, eng, 20)
+	if err := eng.Close(); err != nil {
+		t.Fatalf("Close after rotation failed: %v", err)
+	}
+
+	logIDs := fileIDsWithExt(t, dir, ".log")
+	if len(logIDs) < 3 {
+		t.Fatalf("fixture sanity: want >= 3 data files from rotation, got %v", logIDs)
+	}
+	withHint := hintFilesFor(t, dir)
+	for _, id := range logIDs[:len(logIDs)-1] {
+		if !withHint[id] {
+			t.Errorf("immutable data file %d has no hint file after rotation", id)
+		}
+	}
+}
+
+// Close must write a hint for the active file too, so a clean
+// shutdown also leaves a fast-start map behind. Without any rotation
+// there is exactly one data file and it must get its hint.
+func TestCloseWritesHintForActiveFile(t *testing.T) {
+	dir := t.TempDir()
+	eng := openEngineWithOptions(t, dir, engine.Options{}) // default: no rotation
+
+	want := writeRotatedFixture(t, eng, 3)
+	if err := eng.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	logIDs := fileIDsWithExt(t, dir, ".log")
+	if len(logIDs) != 1 {
+		t.Fatalf("fixture sanity: want exactly 1 data file, got %v", logIDs)
+	}
+	withHint := hintFilesFor(t, dir)
+	if !withHint[logIDs[0]] {
+		t.Errorf("active data file %d has no hint file after Close", logIDs[0])
+	}
+
+	// The hinted reopen stays a fully working engine.
+	reopened := openEngineWithOptions(t, dir, engine.Options{})
+	defer closeEngine(t, reopened)
+	assertAllReadable(t, reopened, want)
 }
