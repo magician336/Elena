@@ -191,11 +191,9 @@ func (e *Engine) switchToMerged(frozen mergeFrozen, newRefs map[string]entryRef,
 	// ---- Phase 4: the old files are unreferenced; drop them. ----
 	var firstErr error
 	for _, id := range frozen.merged {
-		if err := os.Remove(filepath.Join(e.dir, dataFileName(id))); err != nil && !os.IsNotExist(err) && firstErr == nil {
+		if err := e.removeDataAndHintFiles(id); err != nil && firstErr == nil {
 			firstErr = fmt.Errorf("engine: merge: remove data file %d: %w", id, err)
 		}
-		_ = os.Remove(filepath.Join(e.dir, hintFileName(id)))
-		_ = os.Remove(filepath.Join(e.dir, hintFileName(id)+hintTmpSuffix))
 	}
 	if err := syncDir(e.dir); err != nil && firstErr == nil {
 		firstErr = err
@@ -338,9 +336,22 @@ func (e *Engine) discardMergeFiles(ids ...uint32) {
 	}
 	e.mu.Unlock()
 	for _, id := range ids {
-		_ = os.Remove(filepath.Join(e.dir, dataFileName(id)))
-		_ = os.Remove(filepath.Join(e.dir, hintFileName(id)))
-		_ = os.Remove(filepath.Join(e.dir, hintFileName(id)+hintTmpSuffix))
+		_ = e.removeDataAndHintFiles(id)
 	}
 	_ = syncDir(e.dir)
+}
+
+// removeDataAndHintFiles removes from the engine's directory the data
+// file named for id together with its hint and hint-tmp siblings —
+// every file a merge can leave behind for one file ID. Only the data
+// file's removal error is reported (nil when the file is already
+// gone); hint removals are best-effort, since a hint is an accelerator
+// and the next merge reclaims whatever lingers.
+func (e *Engine) removeDataAndHintFiles(id uint32) error {
+	if err := os.Remove(filepath.Join(e.dir, dataFileName(id))); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	_ = os.Remove(filepath.Join(e.dir, hintFileName(id)))
+	_ = os.Remove(filepath.Join(e.dir, hintFileName(id)+hintTmpSuffix))
+	return nil
 }
