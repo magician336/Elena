@@ -116,6 +116,9 @@ func (b *Batch) stage(key, value []byte, expires int64, tombstone bool) error {
 // single write, a Commit that pushes the dead share past
 // Options.MergeDeadRatio runs a merge before it returns — checked
 // after the write lock is released, because Merge takes writeMu itself.
+// Commit shares Put's error asymmetry: a rotation failure after the
+// batch's durable append returns an error although the whole batch is
+// already committed and visible.
 func (b *Batch) Commit() error {
 	e := b.eng
 	e.writeMu.Lock()

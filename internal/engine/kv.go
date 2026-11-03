@@ -47,6 +47,14 @@ type entryRef struct {
 // (under the default always policy a successful Put is durable the
 // moment it returns; see SyncPolicy for the other tiers), then the
 // in-memory index is updated so the new entry wins over any older one.
+//
+// One error asymmetry is deliberate: when the append pushes the active
+// file past Options.MaxDataFileSize and the following rotation fails
+// (for instance its hint write hits a checksum-failing entry), Put
+// returns that error even though this write itself is already durable
+// and visible — a "failed" Put may nevertheless be present after
+// reopen, never the other way around. Delete, PutWithTTL, and Batch
+// Commit share this write path and the same asymmetry.
 func (e *Engine) Put(key, value []byte) error {
 	e.opsPut.Add(1)
 	if err := e.putExpires(key, value, 0); err != nil {
