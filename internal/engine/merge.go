@@ -97,7 +97,7 @@ func (e *Engine) merge() error {
 	// Every file in merged is immutable from here on: appends race
 	// only with nextActiveID, which no snapshot references.
 
-	newRefs, err := e.rewriteInto(out, outID, merged)
+	newRefs, flushed, err := e.rewriteInto(out, outID, merged)
 	if err != nil {
 		e.discardMergeFiles(outID)
 		return err
@@ -124,8 +124,10 @@ func (e *Engine) merge() error {
 		if _, old := mergedSet[ref.fileID]; !old {
 			continue // writer raced ahead into the successor active file
 		}
+		e.liveBytes -= uint64(ref.size)
 		if newRef, ok := newRefs[key]; ok {
 			e.index[key] = newRef
+			e.liveBytes += uint64(newRef.size)
 		} else {
 			delete(e.index, key) // the entry expired before or during the rewrite
 		}
@@ -144,6 +146,7 @@ func (e *Engine) merge() error {
 		}
 	}
 	e.files[outID].entries = uint64(len(newRefs))
+	e.files[outID].bytes = int64(flushed)
 	e.mu.Unlock()
 	e.writeMu.Unlock()
 
@@ -182,7 +185,7 @@ type rewriteItem struct {
 // publish locations in the successor active file). Entries that fail
 // their checksum abort the merge; entries whose expiry has passed are
 // dropped — that is the physical reclamation.
-func (e *Engine) rewriteInto(out *os.File, outID uint32, merged []uint32) (map[string]entryRef, error) {
+func (e *Engine) rewriteInto(out *os.File, outID uint32, merged []uint32) (map[string]entryRef, uint64, error) {
 	mergedSet := make(map[uint32]struct{}, len(merged))
 	for _, id := range merged {
 		mergedSet[id] = struct{}{}
@@ -202,7 +205,7 @@ func (e *Engine) rewriteInto(out *os.File, outID uint32, merged []uint32) (map[s
 	hintTmpPath := hintPath + hintTmpSuffix
 	hw, err := os.OpenFile(hintTmpPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
 	if err != nil {
-		return nil, fmt.Errorf("engine: merge: create hint tmp %q: %w", hintTmpPath, err)
+		return nil, 0, fmt.Errorf("engine: merge: create hint tmp %q: %w", hintTmpPath, err)
 	}
 	dataW := bufio.NewWriterSize(out, 64<<10)
 	hintW := bufio.NewWriterSize(hw, 64<<10)
@@ -218,21 +221,21 @@ func (e *Engine) rewriteInto(out *os.File, outID uint32, merged []uint32) (map[s
 		}
 		buf = buf[:it.ref.size]
 		if _, err := it.df.f.ReadAt(buf, it.ref.offset); err != nil {
-			return nil, fmt.Errorf("engine: merge: read entry for key %q at offset %d: %w", it.key, it.ref.offset, err)
+			return nil, 0, fmt.Errorf("engine: merge: read entry for key %q at offset %d: %w", it.key, it.ref.offset, err)
 		}
 		h := decodeHeader(buf)
 		if entryCRC(buf) != h.crc {
-			return nil, fmt.Errorf("engine: merge: entry for key %q at offset %d: %w", it.key, it.ref.offset, ErrCorrupted)
+			return nil, 0, fmt.Errorf("engine: merge: entry for key %q at offset %d: %w", it.key, it.ref.offset, ErrCorrupted)
 		}
 		if h.expiredAt(now) {
 			continue // dead: physically reclaimed by omission
 		}
 		if _, err := dataW.Write(buf); err != nil {
-			return nil, fmt.Errorf("engine: merge: write entry for key %q: %w", it.key, err)
+			return nil, 0, fmt.Errorf("engine: merge: write entry for key %q: %w", it.key, err)
 		}
 		key := buf[entryHeaderSize : entryHeaderSize+int(h.keyLen)]
 		if err := writeHintRecord(hintW, off, key, h.valueLen); err != nil {
-			return nil, fmt.Errorf("engine: merge: write hint record for key %q: %w", it.key, err)
+			return nil, 0, fmt.Errorf("engine: merge: write hint record for key %q: %w", it.key, err)
 		}
 		newRefs[it.key] = entryRef{fileID: outID, offset: off, size: it.ref.size}
 		off += int64(it.ref.size)
@@ -240,25 +243,25 @@ func (e *Engine) rewriteInto(out *os.File, outID uint32, merged []uint32) (map[s
 	}
 
 	if err := dataW.Flush(); err != nil {
-		return nil, fmt.Errorf("engine: merge: flush data writer: %w", err)
+		return nil, 0, fmt.Errorf("engine: merge: flush data writer: %w", err)
 	}
 	if err := out.Sync(); err != nil {
-		return nil, fmt.Errorf("engine: merge: sync output data file: %w", err)
+		return nil, 0, fmt.Errorf("engine: merge: sync output data file: %w", err)
 	}
 	if err := hintW.Flush(); err != nil {
-		return nil, fmt.Errorf("engine: merge: flush hint writer: %w", err)
+		return nil, 0, fmt.Errorf("engine: merge: flush hint writer: %w", err)
 	}
 	if err := hw.Sync(); err != nil {
-		return nil, fmt.Errorf("engine: merge: sync hint tmp: %w", err)
+		return nil, 0, fmt.Errorf("engine: merge: sync hint tmp: %w", err)
 	}
 	if err := hw.Close(); err != nil {
-		return nil, fmt.Errorf("engine: merge: close hint tmp: %w", err)
+		return nil, 0, fmt.Errorf("engine: merge: close hint tmp: %w", err)
 	}
 	if err := os.Rename(hintTmpPath, hintPath); err != nil {
-		return nil, fmt.Errorf("engine: merge: publish hint %q: %w", hintPath, err)
+		return nil, 0, fmt.Errorf("engine: merge: publish hint %q: %w", hintPath, err)
 	}
 	e.bytesFlushed.Add(flushed) // the rewrite is disk traffic: write amplification includes merges
-	return newRefs, nil
+	return newRefs, flushed, nil
 }
 
 // discardMergeFiles removes the files named for ids from disk and, if

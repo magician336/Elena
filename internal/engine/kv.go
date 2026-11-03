@@ -49,7 +49,11 @@ type entryRef struct {
 // in-memory index is updated so the new entry wins over any older one.
 func (e *Engine) Put(key, value []byte) error {
 	e.opsPut.Add(1)
-	return e.putExpires(key, value, 0)
+	if err := e.putExpires(key, value, 0); err != nil {
+		return err
+	}
+	e.maybeAutoMerge()
+	return nil
 }
 
 // PutWithTTL stores value under key with a time-to-live: once ttl has
@@ -66,7 +70,11 @@ func (e *Engine) PutWithTTL(key, value []byte, ttl time.Duration) error {
 	deadline := time.Now().Add(ttl)
 	if deadline.Before(maxExpiryDeadline) {
 		e.opsPutWithTTL.Add(1)
-		return e.putExpires(key, value, deadline.UnixNano())
+		if err := e.putExpires(key, value, deadline.UnixNano()); err != nil {
+			return err
+		}
+		e.maybeAutoMerge()
+		return nil
 	}
 	return fmt.Errorf("engine: ttl %d: %w", ttl, ErrInvalidTTL)
 }
@@ -110,8 +118,13 @@ func (e *Engine) putExpires(key, value []byte, expires int64) error {
 	e.bytesWritten.Add(uint64(len(key) + len(value)))
 
 	e.mu.Lock()
+	if old, ok := e.index[string(key)]; ok {
+		e.liveBytes -= uint64(old.size)
+	}
 	e.index[string(key)] = entryRef{fileID: e.activeID, offset: offset, size: uint32(len(buf))}
-	e.files[e.activeID].entries++
+	e.liveBytes += uint64(len(buf))
+	active.entries++
+	active.bytes += int64(len(buf))
 	e.activeOffset += int64(len(buf))
 	rotate := e.activeOffset > int64(maxSize)
 	e.mu.Unlock()
@@ -146,6 +159,16 @@ func (e *Engine) Get(key []byte) ([]byte, error) {
 // a later merge reclaims it. Deleting a missing key is not an error.
 func (e *Engine) Delete(key []byte) error {
 	e.opsDelete.Add(1)
+	if err := e.deleteKey(key); err != nil {
+		return err
+	}
+	e.maybeAutoMerge()
+	return nil
+}
+
+// deleteKey appends the tombstone and drops the key from the index;
+// the caller must not hold any engine lock.
+func (e *Engine) deleteKey(key []byte) error {
 	e.writeMu.Lock()
 	defer e.writeMu.Unlock()
 
@@ -170,8 +193,12 @@ func (e *Engine) Delete(key []byte) error {
 	}
 
 	e.mu.Lock()
-	delete(e.index, string(key))
-	e.files[e.activeID].entries++
+	if old, ok := e.index[string(key)]; ok {
+		e.liveBytes -= uint64(old.size)
+		delete(e.index, string(key))
+	}
+	active.entries++
+	active.bytes += int64(len(buf))
 	e.activeOffset += int64(len(buf))
 	rotate := e.activeOffset > int64(maxSize)
 	e.mu.Unlock()
@@ -179,6 +206,33 @@ func (e *Engine) Delete(key []byte) error {
 		return e.rotateActive()
 	}
 	return nil
+}
+
+// maybeAutoMerge merges when the configured dead-ratio threshold is
+// exceeded. It runs on the write path after the write is durable, so
+// the cost lands on the write that crossed the threshold while every
+// other writer keeps appending (Merge never blocks writers for its
+// rewrite phase). A failed auto merge is dropped here: the triggering
+// write already succeeded, and the next threshold-crossing write tries
+// again. Must not be called with any engine lock held.
+func (e *Engine) maybeAutoMerge() {
+	if e.mergeDeadRatio <= 0 {
+		return
+	}
+	e.mu.RLock()
+	var total int64
+	for _, df := range e.files {
+		total += df.bytes
+	}
+	live := e.liveBytes
+	e.mu.RUnlock()
+	if total <= 0 || live > uint64(total) {
+		return
+	}
+	if float64(total-int64(live))/float64(total) <= e.mergeDeadRatio {
+		return
+	}
+	_ = e.Merge()
 }
 
 // appendDurable writes buf to the active file and fdatasyncs it before

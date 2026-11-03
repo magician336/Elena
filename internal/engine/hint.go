@@ -257,9 +257,9 @@ func (e *Engine) loadFromHint(id uint32, dataSize int64) (covered int64, records
 
 	for _, r := range recs {
 		if r.tombstone {
-			delete(e.index, r.key)
+			e.dropKey(r.key)
 		} else {
-			e.index[r.key] = entryRef{fileID: id, offset: r.offset, size: r.size}
+			e.applyEntry(r.key, entryRef{fileID: id, offset: r.offset, size: r.size})
 		}
 	}
 	if n := len(recs); n > 0 {

@@ -70,7 +70,7 @@ func (e *Engine) loadDataFile(id uint32) error {
 		}
 	}
 
-	e.files[id] = &dataFile{f: f, entries: uint64(hintedRecords + scanned)}
+	e.files[id] = &dataFile{f: f, entries: uint64(hintedRecords + scanned), bytes: cleanOffset}
 	// Files load in ascending ID order and the last one becomes the
 	// active file, so track its clean end as the append position.
 	e.activeOffset = cleanOffset
@@ -119,14 +119,35 @@ func (e *Engine) replayFile(f *os.File, id uint32, from int64) (int64, int, erro
 
 		key := string(entry[entryHeaderSize : entryHeaderSize+int(h.keyLen)])
 		if h.valueLen == tombstoneValueLen {
-			delete(e.index, key)
+			e.dropKey(key)
 		} else {
-			e.index[key] = entryRef{fileID: id, offset: off, size: uint32(total)}
+			e.applyEntry(key, entryRef{fileID: id, offset: off, size: uint32(total)})
 		}
 		off += total
 		scanned++
 	}
 	return off, scanned, nil
+}
+
+// applyEntry publishes one replayed location for key, replacing any
+// previous location (last write wins) and keeping liveBytes exact.
+// Used by the replay paths, which apply entries in order. The caller
+// must hold mu (or run before the engine is shared).
+func (e *Engine) applyEntry(key string, ref entryRef) {
+	if old, ok := e.index[key]; ok {
+		e.liveBytes -= uint64(old.size)
+	}
+	e.index[key] = ref
+	e.liveBytes += uint64(ref.size)
+}
+
+// dropKey removes key's location if one exists (tombstone replay).
+// The caller must hold mu (or run before the engine is shared).
+func (e *Engine) dropKey(key string) {
+	if old, ok := e.index[key]; ok {
+		e.liveBytes -= uint64(old.size)
+		delete(e.index, key)
+	}
 }
 
 // createActive creates a brand-new data file for appends, syncs the

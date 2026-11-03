@@ -134,10 +134,10 @@ func (e *Engine) Stats() Stats {
 	}
 
 	var keyBytes uint64
-	for key, ref := range e.index {
+	for key := range e.index {
 		keyBytes += uint64(len(key))
-		s.LiveBytes += uint64(ref.size)
 	}
+	s.LiveBytes = e.liveBytes
 	s.IndexMemoryBytes = s.LiveEntries*indexEntryOverhead + keyBytes
 	if s.DataBytes > s.LiveBytes {
 		s.DeadBytes = s.DataBytes - s.LiveBytes
@@ -148,19 +148,13 @@ func (e *Engine) Stats() Stats {
 	return s
 }
 
-// fileStatsLocked snapshots the per-file table. The caller must hold mu.
+// fileStatsLocked snapshots the per-file table from the incrementally
+// maintained counters (no syscalls: the counters are updated wherever
+// the files change). The caller must hold mu.
 func (e *Engine) fileStatsLocked() []FileStats {
 	files := make([]FileStats, 0, len(e.files))
 	for id, df := range e.files {
-		info, err := df.f.Stat()
-		if err != nil {
-			// A file whose size cannot be stat'd is reported with the
-			// error surfaced through its size; the engine itself will
-			// fail the read path long before this matters here.
-			files = append(files, FileStats{FileID: id, SizeBytes: -1, Entries: df.entries, Active: id == e.activeID})
-			continue
-		}
-		files = append(files, FileStats{FileID: id, SizeBytes: info.Size(), Entries: df.entries, Active: id == e.activeID})
+		files = append(files, FileStats{FileID: id, SizeBytes: df.bytes, Entries: df.entries, Active: id == e.activeID})
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].FileID < files[j].FileID })
 	return files

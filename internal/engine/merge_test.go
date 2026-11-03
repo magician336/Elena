@@ -303,3 +303,83 @@ func TestHintTmpResidueIsCleaned(t *testing.T) {
 		}
 	})
 }
+
+// Options.MergeDeadRatio makes the write path merge by itself: once a
+// successful write pushes the dead share past the threshold, a merge
+// runs before that call returns — no explicit Merge() anywhere. Below
+// the threshold nothing fires; with the default (disabled) option
+// heavy churn never fires one either.
+func TestAutoMergeTriggersWhenDeadRatioExceedsThreshold(t *testing.T) {
+	dir := t.TempDir()
+	eng := openEngineWithOptions(t, dir, engine.Options{MergeDeadRatio: 0.5})
+	defer closeEngine(t, eng)
+
+	mustPut(t, eng, "k1", "v1")
+	mustPut(t, eng, "k2", "v2")
+	mustPut(t, eng, "k1", "v1-longer") // dead share 1/3 of the bytes: below 0.5
+	if s := eng.Stats(); s.OpsMerge != 0 {
+		t.Fatalf("OpsMerge = %d below threshold, want 0 (no auto merge yet)", s.OpsMerge)
+	}
+
+	if err := eng.Delete([]byte("k1")); err != nil {
+		t.Fatalf("Delete(k1) failed: %v", err)
+	}
+	s := eng.Stats()
+	if s.OpsMerge == 0 {
+		t.Fatal("OpsMerge = 0 after a write crossed the threshold, want the write path to have merged automatically")
+	}
+	if s.DeadEntries != 0 {
+		t.Errorf("DeadEntries = %d after auto merge, want 0", s.DeadEntries)
+	}
+	if got, err := eng.Get([]byte("k2")); err != nil || string(got) != "v2" {
+		t.Errorf("Get(k2) after auto merge = %q, %v, want v2", got, err)
+	}
+	if _, err := eng.Get([]byte("k1")); err != engine.ErrNotFound {
+		t.Errorf("Get(k1) after auto merge err = %v, want ErrNotFound", err)
+	}
+}
+
+// Without an explicit threshold the engine must never merge on its
+// own, however much dead data churn produces.
+func TestAutoMergeDisabledByDefault(t *testing.T) {
+	dir := t.TempDir()
+	eng := openEngineWithOptions(t, dir, engine.Options{})
+	defer closeEngine(t, eng)
+
+	for round := 0; round < 10; round++ {
+		mustPut(t, eng, "k", "value") // fresh or overwrite
+		if err := eng.Delete([]byte("k")); err != nil {
+			t.Fatalf("Delete(k) failed: %v", err)
+		}
+	}
+	s := eng.Stats()
+	if s.OpsMerge != 0 {
+		t.Errorf("OpsMerge = %d with default options, want 0 (auto merge is opt-in)", s.OpsMerge)
+	}
+	if s.DeadEntries == 0 {
+		t.Error("DeadEntries = 0 after churn, want dead data to accumulate while merging is disabled")
+	}
+}
+
+// A threshold above 1 is a configuration error (the dead share can
+// never exceed 1, so nothing could ever strictly pass it), while
+// values close to the boundary are accepted and still trigger when
+// the dead share reaches its maximum.
+func TestOpenValidatesMergeDeadRatio(t *testing.T) {
+	if eng, err := engine.Open(t.TempDir(), engine.Options{MergeDeadRatio: 1.5}); err == nil {
+		closeEngine(t, eng)
+		t.Fatal("Open with MergeDeadRatio 1.5 succeeded, want a configuration error")
+	}
+	eng, err := engine.Open(t.TempDir(), engine.Options{MergeDeadRatio: 0.9})
+	if err != nil {
+		t.Fatalf("Open with MergeDeadRatio 0.9 failed: %v", err)
+	}
+	defer closeEngine(t, eng)
+	mustPut(t, eng, "k", "v")
+	if err := eng.Delete([]byte("k")); err != nil {
+		t.Fatalf("Delete(k) failed: %v", err)
+	}
+	if s := eng.Stats(); s.OpsMerge == 0 {
+		t.Error("OpsMerge = 0 with threshold 0.9 and a fully dead disk, want an auto merge")
+	}
+}

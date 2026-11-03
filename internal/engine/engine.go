@@ -64,8 +64,8 @@ type Options struct {
 	// <= 0 select defaultMaxKeySize.
 	MaxKeySize int
 
-	// MaxValueSize is the largest value length in bytes. Values
-	// <= 0 select defaultMaxValueSize.
+	// MaxValueSize is the largest accepted value length in bytes.
+	// Values <= 0 select defaultMaxValueSize.
 	MaxValueSize int
 
 	// MaxDataFileSize is the size threshold that triggers rotation of
@@ -74,6 +74,19 @@ type Options struct {
 	// with the next monotonic file ID takes over. Values <= 0 select
 	// defaultMaxDataFileSize.
 	MaxDataFileSize int
+
+	// MergeDeadRatio is the dead-byte share (dead bytes / data bytes,
+	// the Stats.DeadRatio quantity) at which the engine merges by
+	// itself: the first write that pushes the ratio past the threshold
+	// runs a merge before it returns. The cost of a merge therefore
+	// lands on the write that crossed the threshold, while every other
+	// writer keeps appending. A failed auto merge is dropped (the
+	// triggering write already succeeded) and retried by the next
+	// threshold-crossing write. Values <= 0 disable auto merge (the
+	// default); values > 1 are rejected at Open because the dead share
+	// can never exceed 1. Exactly 1 merges whenever any dead byte
+	// exists.
+	MergeDeadRatio float64
 }
 
 // dataFile couples an open data file with the per-file accounting
@@ -92,8 +105,13 @@ type Options struct {
 // when the file is retired and the last reader is done (or at Close
 // at the latest).
 type dataFile struct {
-	f       *os.File
-	entries uint64 // guarded by Engine.mu
+	f *os.File
+
+	// entries and bytes are this file's entry count and size in bytes
+	// (live and dead entries alike); both are guarded by Engine.mu and
+	// maintained incrementally on append, at replay, and at merge.
+	entries uint64
+	bytes   int64
 
 	scanRefs  atomic.Int32
 	retired   atomic.Bool
@@ -138,8 +156,15 @@ type Engine struct {
 	maxKeySize      int
 	maxValueSize    int
 	maxDataFileSize int
+	mergeDeadRatio  float64
 
 	index map[string]entryRef
+
+	// liveBytes is the encoded size of the entries the index points at,
+	// maintained incrementally (write path, replay, merge swap) so the
+	// dead share is computable in O(files) instead of O(keys). Guarded
+	// by mu.
+	liveBytes uint64
 
 	// Cumulative observables, published through Stats. The op counters
 	// tick on every public call; the byte counters tick only when bytes
@@ -171,6 +196,9 @@ type Engine struct {
 // (truncating any torn tail), and prepares the active data file for
 // appends.
 func Open(dir string, opts Options) (*Engine, error) {
+	if opts.MergeDeadRatio > 1 {
+		return nil, fmt.Errorf("engine: open %q: Options.MergeDeadRatio %v is above 1 (the dead share cannot exceed 1)", dir, opts.MergeDeadRatio)
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("engine: create storage directory %q: %w", dir, err)
 	}
@@ -195,6 +223,7 @@ func Open(dir string, opts Options) (*Engine, error) {
 		maxKeySize:      opts.MaxKeySize,
 		maxValueSize:    opts.MaxValueSize,
 		maxDataFileSize: opts.MaxDataFileSize,
+		mergeDeadRatio:  opts.MergeDeadRatio,
 		index:           make(map[string]entryRef),
 	}
 	if eng.maxKeySize <= 0 {
