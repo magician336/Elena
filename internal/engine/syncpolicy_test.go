@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -89,6 +90,35 @@ func TestDefaultSyncPolicyIsAlways(t *testing.T) {
 	var opts engine.Options
 	if opts.SyncPolicy != engine.SyncAlways {
 		t.Fatalf("Options{}.SyncPolicy = %v, want SyncAlways (the default tier)", opts.SyncPolicy)
+	}
+}
+
+// Every tier renders its name, and the unknown-tier error carries the
+// offending value — the operator has to be able to see which setting
+// was rejected.
+func TestSyncPolicyStringNames(t *testing.T) {
+	for _, tt := range []struct {
+		policy engine.SyncPolicy
+		want   string
+	}{
+		{engine.SyncAlways, "always"},
+		{engine.SyncInterval, "interval"},
+		{engine.SyncNone, "none"},
+		{engine.SyncPolicy(42), "unknown(42)"},
+	} {
+		if got := tt.policy.String(); got != tt.want {
+			t.Errorf("SyncPolicy(%d).String() = %q, want %q", int(tt.policy), got, tt.want)
+		}
+	}
+
+	_, err := engine.Open(t.TempDir(), engine.Options{SyncPolicy: engine.SyncPolicy(7)})
+	if err == nil {
+		t.Fatal("Open with an unknown policy succeeded, want a configuration error")
+	}
+	for _, want := range []string{"unknown(7)", "always, interval, none"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("Open error %q does not mention %q", err, want)
+		}
 	}
 }
 
@@ -316,4 +346,42 @@ func TestSyncIntervalFlusherUnderConcurrentLoad(t *testing.T) {
 			t.Fatalf("Get(churn-%06d) after interval churn = %q, %v; want cv, nil", i, got, err)
 		}
 	}
+}
+
+// The interval flusher must also coexist with automatic merges: with a
+// low MergeDeadRatio the churned writes keep firing merges on the write
+// path while the flusher syncs the active file and rotations seal
+// files — three lock holders overlapping on writeMu throughout. The
+// final verdict goes through a Close+reopen: every surviving key reads
+// back exactly, and the merges actually ran.
+func TestSyncIntervalFlusherWithAutoMerges(t *testing.T) {
+	dir := t.TempDir()
+	opts := engine.Options{
+		SyncPolicy:      engine.SyncInterval,
+		SyncPeriod:      time.Millisecond,
+		MergeDeadRatio:  0.1,
+		MaxDataFileSize: 4 * (28 + 7 + rotateFixtureValueSize),
+	}
+	eng := openEngineWithOptions(t, dir, opts)
+
+	want := writeRotatedFixture(t, eng, 20)
+	for i := 0; i < 20; i++ { // overwrites: dead share crosses the threshold repeatedly
+		key := fmt.Sprintf("key%03d", i)
+		value := want[key] + "-overwritten"
+		if err := eng.Put([]byte(key), []byte(value)); err != nil {
+			t.Fatalf("overwrite Put(%q) failed: %v", key, err)
+		}
+		want[key] = value
+	}
+	if s := eng.Stats(); s.OpsMerge == 0 {
+		t.Fatal("OpsMerge = 0 after churn past a 0.1 dead threshold, want automatic merges to have run")
+	}
+
+	assertAllReadable(t, eng, want)
+	if err := eng.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+	reopened := openEngineWithOptions(t, dir, opts)
+	defer closeEngine(t, reopened)
+	assertAllReadable(t, reopened, want)
 }
