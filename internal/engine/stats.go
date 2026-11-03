@@ -74,8 +74,8 @@ type Stats struct {
 	IndexMemoryBytes uint64
 
 	// BytesWritten is the cumulative logical payload (key + value
-	// bytes) accepted by Put and PutWithTTL. Deletes carry no logical
-	// payload.
+	// bytes) accepted by Put and PutWithTTL and by committed batch
+	// puts. Deletes carry no logical payload.
 	BytesWritten uint64
 
 	// BytesFlushed is the cumulative encoded entry size appended to

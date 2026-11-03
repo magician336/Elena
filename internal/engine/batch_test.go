@@ -4,7 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -440,5 +443,268 @@ func TestBatchEmptyCommitAndReuse(t *testing.T) {
 	assertAllReadable(t, eng, map[string]string{"round-1": "v1", "round-2": "v2"})
 	if got := eng.Stats().LiveEntries; got != 2 {
 		t.Errorf("LiveEntries after two reused-batch rounds = %d, want 2", got)
+	}
+}
+
+// The write-amplification counters must see batch writes: one Commit
+// of three puts and a delete counts exactly its logical payload
+// (key+value bytes; tombstones carry none) and its encoded bytes (all
+// entry headers included) — same accounting as single writes, or the
+// Stats-based write-amplification figure would silently lie.
+func TestBatchCountsInWriteAmplificationStats(t *testing.T) {
+	dir := t.TempDir()
+	eng := openEngine(t, dir)
+	defer closeEngine(t, eng)
+
+	// 3 puts: key "k00".."k02" (3 B), value "value" (5 B) — entry 28+3+5 = 36 B each.
+	// 1 delete: key "k03" (3 B) — tombstone 28+3 = 31 B.
+	const entryHeaderSize = 28
+	const wantWritten = 3 * (3 + 5)
+	const wantFlushed = 3*(entryHeaderSize+3+5) + (entryHeaderSize + 3)
+
+	before := eng.Stats()
+	b := eng.NewBatch()
+	for i := 0; i < 4; i++ {
+		key := fmt.Sprintf("k%02d", i)
+		if i == 3 {
+			if err := b.Delete([]byte(key)); err != nil {
+				t.Fatalf("batch Delete failed: %v", err)
+			}
+			continue
+		}
+		if err := b.Put([]byte(key), []byte("value")); err != nil {
+			t.Fatalf("batch Put(%q) failed: %v", key, err)
+		}
+	}
+	if err := b.Commit(); err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+
+	after := eng.Stats()
+	if got := after.BytesWritten - before.BytesWritten; got != wantWritten {
+		t.Errorf("BytesWritten delta after batch = %d, want %d", got, wantWritten)
+	}
+	if got := after.BytesFlushed - before.BytesFlushed; got != wantFlushed {
+		t.Errorf("BytesFlushed delta after batch = %d, want %d", got, wantFlushed)
+	}
+}
+
+// A batch larger than the rotation threshold must stay atomic even
+// though its single append pushes the active file past the limit: the
+// whole batch lands in one file, Commit rotates afterwards, and the
+// reopened engine serves every key of the batch. Rotation interacts
+// with a batch only after the batch is durable.
+func TestBatchCommitAcrossRotationThreshold(t *testing.T) {
+	dir := t.TempDir()
+	// smallFileOptions rotates roughly every 4 fixture entries; the
+	// batch below holds 30, so one Commit crosses the threshold many
+	// times over.
+	eng := openEngineWithOptions(t, dir, smallFileOptions())
+
+	want := map[string]string{}
+	b := eng.NewBatch()
+	for i := 0; i < 30; i++ {
+		key := fmt.Sprintf("batch%03d", i)
+		value := fmt.Sprintf("value%03d", i) + strings.Repeat("x", rotateFixtureValueSize)
+		if err := b.Put([]byte(key), []byte(value)); err != nil {
+			t.Fatalf("batch Put(%q) failed: %v", key, err)
+		}
+		want[key] = value
+	}
+	if err := b.Commit(); err != nil {
+		t.Fatalf("Commit across rotation threshold failed: %v", err)
+	}
+
+	if got := countDataFilesIn(t, dir); got < 2 {
+		t.Fatalf("data file count after batch crossed the threshold = %d, want >= 2 (rotation must have happened)", got)
+	}
+	assertAllReadable(t, eng, want)
+
+	// The engine keeps working after the rotating batch, and everything
+	// survives a reopen.
+	if err := eng.Put([]byte("post-rotate"), []byte("v")); err != nil {
+		t.Fatalf("Put after rotating batch failed: %v", err)
+	}
+	want["post-rotate"] = "v"
+	if err := eng.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+	reopened := openEngineWithOptions(t, dir, smallFileOptions())
+	defer closeEngine(t, reopened)
+	assertAllReadable(t, reopened, want)
+}
+
+// Batches and single writes must serialize as writers while readers
+// run: two writer goroutines (one batching, one writing single puts)
+// plus readers probing both streams must stay clean under the race
+// detector, and every acknowledged write must be exact at the end.
+func TestConcurrentBatchAndSingleWritesWithReaders(t *testing.T) {
+	dir := t.TempDir()
+	eng := openEngine(t, dir)
+	defer closeEngine(t, eng)
+
+	for i := 0; i < 8; i++ {
+		if err := eng.Put([]byte(fmt.Sprintf("seed-%d", i)), []byte("stable")); err != nil {
+			t.Fatalf("seed Put failed: %v", err)
+		}
+	}
+
+	const perWriter = 120
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { // single-write stream
+		defer wg.Done()
+		for i := 0; i < perWriter; i++ {
+			key := []byte(fmt.Sprintf("single-%05d", i))
+			if err := eng.Put(key, []byte(fmt.Sprintf("sv-%d", i))); err != nil {
+				t.Errorf("concurrent Put(%q) failed: %v", key, err)
+				return
+			}
+		}
+	}()
+	go func() { // batch stream
+		defer wg.Done()
+		for i := 0; i < perWriter; i += 4 {
+			b := eng.NewBatch()
+			for j := 0; j < 4; j++ {
+				key := []byte(fmt.Sprintf("batched-%05d", i+j))
+				if err := b.Put(key, []byte(fmt.Sprintf("bv-%d", i+j))); err != nil {
+					t.Errorf("concurrent batch Put(%q) failed: %v", key, err)
+					return
+				}
+			}
+			if err := b.Commit(); err != nil {
+				t.Errorf("concurrent Commit failed: %v", err)
+				return
+			}
+		}
+	}()
+
+	var readers sync.WaitGroup
+	for r := 0; r < 3; r++ {
+		readers.Add(1)
+		go func(id int) {
+			defer readers.Done()
+			for i := 0; i < 150; i++ {
+				if _, err := eng.Get([]byte(fmt.Sprintf("seed-%d", i%8))); err != nil {
+					t.Errorf("reader %d: Get(seed) err = %v", id, err)
+					return
+				}
+				n := (i + id*37) % perWriter
+				fresh := []byte(fmt.Sprintf("batched-%05d", n))
+				got, err := eng.Get(fresh)
+				if err == nil {
+					if want := fmt.Sprintf("bv-%d", n); string(got) != want {
+						t.Errorf("reader %d: Get(%q) = %q, want %q or ErrNotFound", id, fresh, got, want)
+						return
+					}
+				} else if !errors.Is(err, engine.ErrNotFound) {
+					t.Errorf("reader %d: Get(%q) err = %v, want hit or ErrNotFound", id, fresh, err)
+					return
+				}
+			}
+		}(r)
+	}
+	readers.Wait()
+	wg.Wait()
+
+	for i := 0; i < perWriter; i++ {
+		got, err := eng.Get([]byte(fmt.Sprintf("single-%05d", i)))
+		if err != nil || string(got) != fmt.Sprintf("sv-%d", i) {
+			t.Fatalf("Get(single-%05d) after writers = %q, %v; want exact value", i, got, err)
+		}
+		got, err = eng.Get([]byte(fmt.Sprintf("batched-%05d", i)))
+		if err != nil || string(got) != fmt.Sprintf("bv-%d", i) {
+			t.Fatalf("Get(batched-%05d) after writers = %q, %v; want exact value", i, got, err)
+		}
+	}
+}
+
+// Readers must never observe a half-published batch: every batch below
+// writes four keys sharing a generation prefix, and a concurrent
+// reader continuously verifies — through Scan, whose item set is a
+// snapshot taken under one lock — that any generation visible in one
+// snapshot is fully visible with exact values. (A sequence of Gets
+// cannot prove this: each Get is its own moment in time, and a batch
+// commit may legally land between two of them.)
+func TestConcurrentBatchPublicationIsAtomicToReaders(t *testing.T) {
+	dir := t.TempDir()
+	eng := openEngine(t, dir)
+
+	const generations = 60
+	const perGen = 4
+	var committed atomic.Int64
+	writerDone := make(chan struct{})
+	go func() {
+		defer close(writerDone)
+		for g := 0; g < generations; g++ {
+			b := eng.NewBatch()
+			for j := 0; j < perGen; j++ {
+				key := []byte(fmt.Sprintf("gen-%04d-%d", g, j))
+				if err := b.Put(key, []byte(fmt.Sprintf("v-%d-%d", g, j))); err != nil {
+					t.Errorf("batch Put(%q) failed: %v", key, err)
+					return
+				}
+			}
+			if err := b.Commit(); err != nil {
+				t.Errorf("Commit(gen %d) failed: %v", g, err)
+				return
+			}
+			committed.Store(int64(g + 1)) // generations [0, g] are committed
+		}
+	}()
+
+	var readers sync.WaitGroup
+	for r := 0; r < 3; r++ {
+		readers.Add(1)
+		go func() {
+			defer readers.Done()
+			for i := 0; i < 200; i++ {
+				// Generations below base were committed before this
+				// load; the snapshot taken afterwards must contain them
+				// whole. Generations at or above base may be in flight
+				// and must appear whole or not at all.
+				base := int(committed.Load())
+				visible := make(map[int]int)
+				err := eng.Scan(engine.ScanOptions{Prefix: []byte("gen-")}, func(key, value []byte) error {
+					g, err := strconv.Atoi(string(key[4:8]))
+					if err != nil {
+						return fmt.Errorf("unexpected scan key %q: %w", key, err)
+					}
+					j := int(key[9] - '0')
+					if want := fmt.Sprintf("v-%d-%d", g, j); string(value) != want {
+						return fmt.Errorf("scan value for %q = %q, want %q", key, value, want)
+					}
+					visible[g]++
+					return nil
+				})
+				if err != nil {
+					t.Errorf("reader Scan err = %v", err)
+					return
+				}
+				for g, n := range visible {
+					if n != perGen {
+						t.Errorf("generation %d half-published in one snapshot: %d of %d keys", g, n, perGen)
+						return
+					}
+				}
+				for g := 0; g < base && g < generations; g++ {
+					if visible[g] != perGen {
+						t.Errorf("committed generation %d incomplete in snapshot (base=%d): %d of %d", g, base, visible[g], perGen)
+						return
+					}
+				}
+			}
+		}()
+	}
+	readers.Wait()
+	<-writerDone
+
+	for g := 0; g < generations; g++ {
+		for j := 0; j < perGen; j++ {
+			if _, err := eng.Get([]byte(fmt.Sprintf("gen-%04d-%d", g, j))); err != nil {
+				t.Fatalf("Get(gen-%04d-%d) after writer err = %v", g, j, err)
+			}
+		}
 	}
 }

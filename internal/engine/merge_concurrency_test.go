@@ -4,7 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -138,6 +140,125 @@ func TestConcurrentReadWriteDuringMerge(t *testing.T) {
 	}
 	if s := eng.Stats(); s.OpsMerge == 0 {
 		t.Error("OpsMerge = 0, want at least one merge to have run during the churn")
+	}
+}
+
+// Batch commits must keep landing (and surviving) while merges churn
+// the file set underneath: a writer commits batches of four keys, a
+// merger merges back to back over rotating files, and a reader keeps
+// verifying whole batches are either fully invisible or fully visible.
+// Afterwards every committed key must be exact and must survive a
+// reopen.
+func TestConcurrentBatchCommitsDuringMerge(t *testing.T) {
+	dir := t.TempDir()
+	eng := openEngineWithOptions(t, dir, smallFileOptions())
+
+	const batches = 60
+	const perBatch = 4
+	var committed atomic.Int64
+	writerDone := make(chan struct{})
+	go func() {
+		defer close(writerDone)
+		for g := 0; g < batches; g++ {
+			b := eng.NewBatch()
+			for j := 0; j < perBatch; j++ {
+				key := []byte(fmt.Sprintf("bgen-%04d-%d", g, j))
+				if err := b.Put(key, []byte(fmt.Sprintf("v-%d-%d", g, j))); err != nil {
+					t.Errorf("batch Put(%q) during merge failed: %v", key, err)
+					return
+				}
+			}
+			if err := b.Commit(); err != nil {
+				t.Errorf("Commit during merge failed: %v", err)
+				return
+			}
+			committed.Store(int64(g + 1)) // generations [0, g] are committed
+		}
+	}()
+
+	mergerDone := make(chan struct{})
+	go func() {
+		defer close(mergerDone)
+		for {
+			select {
+			case <-writerDone:
+				return
+			default:
+			}
+			if err := eng.Merge(); err != nil {
+				t.Errorf("Merge during batch commits failed: %v", err)
+				return
+			}
+			for i := 0; i < 10; i++ {
+				select {
+				case <-writerDone:
+					return
+				default:
+				}
+				if err := eng.Put([]byte("merger-noop"), []byte("v")); err != nil {
+					t.Errorf("merger Put failed: %v", err)
+					return
+				}
+			}
+		}
+	}()
+
+	var readers sync.WaitGroup
+	for r := 0; r < 2; r++ {
+		readers.Add(1)
+		go func() {
+			defer readers.Done()
+			for i := 0; i < 200; i++ {
+				// One snapshot (Scan) is one moment in time; committed
+				// generations must be whole in it, in-flight ones whole
+				// or absent. Sequential Gets could not prove this — a
+				// commit may legally land between two Gets.
+				base := int(committed.Load())
+				visible := make(map[int]int)
+				err := eng.Scan(engine.ScanOptions{Prefix: []byte("bgen-")}, func(key, _ []byte) error {
+					g, err := strconv.Atoi(string(key[5:9]))
+					if err != nil {
+						return fmt.Errorf("unexpected scan key %q: %w", key, err)
+					}
+					visible[g]++
+					return nil
+				})
+				if err != nil {
+					t.Errorf("reader Scan during merge err = %v", err)
+					return
+				}
+				for g, n := range visible {
+					if n != perBatch {
+						t.Errorf("batch generation %d half-visible during merge: %d of %d", g, n, perBatch)
+						return
+					}
+				}
+				for g := 0; g < base && g < batches; g++ {
+					if visible[g] != perBatch {
+						t.Errorf("committed batch generation %d incomplete during merge (base=%d): %d of %d", g, base, visible[g], perBatch)
+						return
+					}
+				}
+			}
+		}()
+	}
+	readers.Wait()
+	<-mergerDone
+	<-writerDone
+
+	if err := eng.Close(); err != nil {
+		t.Fatalf("Close after concurrent batch+merge failed: %v", err)
+	}
+	reopened := openEngineWithOptions(t, dir, smallFileOptions())
+	defer closeEngine(t, reopened)
+	for g := 0; g < batches; g++ {
+		for j := 0; j < perBatch; j++ {
+			key := fmt.Sprintf("bgen-%04d-%d", g, j)
+			got, err := reopened.Get([]byte(key))
+			if err != nil || string(got) != fmt.Sprintf("v-%d-%d", g, j) {
+				t.Fatalf("Get(%q) after reopen = %q, %v; want exact committed value", key, got, err)
+			}
+		}
 	}
 }
 
