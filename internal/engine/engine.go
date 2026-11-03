@@ -173,6 +173,14 @@ func Open(dir string, opts Options) (*Engine, error) {
 		eng.maxDataFileSize = defaultMaxDataFileSize
 	}
 
+	// Hint publication renames a synced ".hint.tmp" into place, so a
+	// crash mid-write leaves residue under the tmp name. Remove it
+	// before recovery so the directory Open hands back is clean.
+	if err := removeHintTmpResidue(dir); err != nil {
+		_ = lockFile.Close()
+		return nil, err
+	}
+
 	if err := eng.recoverFiles(); err != nil {
 		_ = eng.Close()
 		return nil, err

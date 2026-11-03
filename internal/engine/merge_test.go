@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"elena/internal/engine"
 )
@@ -149,4 +150,156 @@ func countExtIn(t *testing.T, dir, ext string) int {
 		}
 	}
 	return n
+}
+
+// Unexpired TTL entries must survive a merge byte-for-byte — expiry
+// header included — so the countdown keeps running across the merge
+// and a reopen, and the entry disappears exactly when its deadline
+// says so.
+func TestMergeKeepsUnexpiredTTLUntilDeadline(t *testing.T) {
+	dir := t.TempDir()
+	eng := openEngineWithOptions(t, dir, engine.Options{})
+	mustPut(t, eng, "plain", "v")
+	mustPutWithTTL(t, eng, "ephemeral", "v", 500*time.Millisecond)
+
+	if err := eng.Merge(); err != nil {
+		t.Fatalf("Merge() failed: %v", err)
+	}
+	if got, err := eng.Get([]byte("ephemeral")); err != nil || string(got) != "v" {
+		t.Fatalf("Get(ephemeral) after merge = %q, %v, want the live TTL entry", got, err)
+	}
+	if err := eng.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	time.Sleep(600 * time.Millisecond) // let the deadline pass across Close/Open
+	reopened := openEngineWithOptions(t, dir, engine.Options{})
+	defer closeEngine(t, reopened)
+	if _, err := reopened.Get([]byte("ephemeral")); err != engine.ErrNotFound {
+		t.Errorf("Get(ephemeral) after deadline = %v, want ErrNotFound (expiry header survived the merge)", err)
+	}
+	if got, err := reopened.Get([]byte("plain")); err != nil || string(got) != "v" {
+		t.Errorf("Get(plain) after merge+reopen = %q, %v, want the untouched value", got, err)
+	}
+}
+
+// Expired entries are physically reclaimed by merge: they leave the
+// index, their bytes leave the disk (observable as a DataBytes drop),
+// and the dead accounting resets to zero.
+func TestMergePhysicallyReclaimsExpiredEntries(t *testing.T) {
+	dir := t.TempDir()
+	eng := openEngineWithOptions(t, dir, engine.Options{})
+	defer closeEngine(t, eng)
+
+	mustPut(t, eng, "keep-1", "value-1")
+	mustPut(t, eng, "keep-2", "value-2")
+	mustPutWithTTL(t, eng, "gone-1", "value-1", 50*time.Millisecond)
+	mustPutWithTTL(t, eng, "gone-2", "value-2", 50*time.Millisecond)
+
+	time.Sleep(80 * time.Millisecond) // both TTL entries expire
+	before := eng.Stats()
+	if _, err := eng.Get([]byte("gone-1")); err != engine.ErrNotFound {
+		t.Fatalf("Get(gone-1) after expiry err = %v, want ErrNotFound", err)
+	}
+
+	if err := eng.Merge(); err != nil {
+		t.Fatalf("Merge() failed: %v", err)
+	}
+
+	after := eng.Stats()
+	if after.LiveEntries != 2 {
+		t.Errorf("LiveEntries after merge = %d, want 2 (expired keys left the index)", after.LiveEntries)
+	}
+	if after.DataBytes >= before.DataBytes {
+		t.Errorf("DataBytes after merge = %d, want < %d (expired bytes physically reclaimed)", after.DataBytes, before.DataBytes)
+	}
+	if after.DeadEntries != 0 || after.DeadRatio != 0 {
+		t.Errorf("dead accounting after merge: entries = %d, ratio = %v, want 0/0", after.DeadEntries, after.DeadRatio)
+	}
+	if _, err := eng.Get([]byte("gone-1")); err != engine.ErrNotFound {
+		t.Errorf("Get(gone-1) after merge err = %v, want ErrNotFound", err)
+	}
+	if got, err := eng.Get([]byte("keep-1")); err != nil || string(got) != "value-1" {
+		t.Errorf("Get(keep-1) after merge = %q, %v, want live value", got, err)
+	}
+}
+
+// After a merge, Open must rebuild the index through the merged
+// output's hint file and serve every live entry — the hint written by
+// the merge is a first-class startup path, not an afterthought.
+func TestMergeOutputHintFastPathReopensCleanly(t *testing.T) {
+	dir := t.TempDir()
+	eng := openEngineWithOptions(t, dir, smallFileOptions())
+
+	want := writeRotatedFixture(t, eng, 30)
+	for i := 0; i < 10; i++ { // churn so the merge has real work
+		key := keyOf(i)
+		if err := eng.Delete([]byte(key)); err != nil {
+			t.Fatalf("Delete(%q) failed: %v", key, err)
+		}
+		delete(want, key)
+	}
+	if err := eng.Merge(); err != nil {
+		t.Fatalf("Merge() failed: %v", err)
+	}
+	if got := countExtIn(t, dir, ".hint"); got != 1 {
+		t.Fatalf("hint files after merge = %d, want 1 (the merged output's)", got)
+	}
+	if err := eng.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	reopened := openEngineWithOptions(t, dir, smallFileOptions())
+	defer closeEngine(t, reopened)
+	assertAllReadable(t, reopened, want)
+	if s := reopened.Stats(); s.LiveEntries != uint64(len(want)) || s.DeadEntries != 0 {
+		t.Errorf("after reopen via hint: live = %d, dead = %d, want %d/0", s.LiveEntries, s.DeadEntries, len(want))
+	}
+}
+
+// A crashed hint write leaves a ".hint.tmp" residue behind. Open must
+// remove the residue (a fresh engine would otherwise carry it
+// forever), and a merge must clean the residue of the files it
+// reclaims.
+func TestHintTmpResidueIsCleaned(t *testing.T) {
+	t.Run("open removes residue", func(t *testing.T) {
+		dir := t.TempDir()
+		eng := openEngineWithOptions(t, dir, engine.Options{})
+		mustPut(t, eng, "k", "v")
+		if err := eng.Close(); err != nil {
+			t.Fatalf("Close failed: %v", err)
+		}
+		residue := filepath.Join(dir, "0000000007.hint.tmp")
+		if err := os.WriteFile(residue, []byte("half-written"), 0o644); err != nil {
+			t.Fatalf("create residue: %v", err)
+		}
+
+		reopened := openEngineWithOptions(t, dir, engine.Options{})
+		defer closeEngine(t, reopened)
+		if _, err := os.Stat(residue); !os.IsNotExist(err) {
+			t.Errorf("hint tmp residue still present after Open: stat err = %v, want IsNotExist", err)
+		}
+		if got, err := reopened.Get([]byte("k")); err != nil || string(got) != "v" {
+			t.Errorf("Get(k) after residue cleanup = %q, %v, want live value", got, err)
+		}
+	})
+
+	t.Run("merge removes residue of merged files", func(t *testing.T) {
+		dir := t.TempDir()
+		eng := openEngineWithOptions(t, dir, engine.Options{})
+		defer closeEngine(t, eng)
+		mustPut(t, eng, "k", "v")
+		// Residue of the active data file's ID (the file merge will
+		// rotate away and reclaim).
+		residue := filepath.Join(dir, "0000000001.hint.tmp")
+		if err := os.WriteFile(residue, []byte("half-written"), 0o644); err != nil {
+			t.Fatalf("create residue: %v", err)
+		}
+		if err := eng.Merge(); err != nil {
+			t.Fatalf("Merge() failed: %v", err)
+		}
+		if _, err := os.Stat(residue); !os.IsNotExist(err) {
+			t.Errorf("hint tmp residue still present after Merge: stat err = %v, want IsNotExist", err)
+		}
+	})
 }

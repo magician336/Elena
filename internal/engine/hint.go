@@ -7,6 +7,7 @@ import (
 	"hash/crc32"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Hint files: a compact key-to-position map written next to a data
@@ -51,6 +52,32 @@ const (
 // hintFileName returns the hint file name for a data file ID.
 func hintFileName(id uint32) string {
 	return fmt.Sprintf("%010d%s", id, hintFileExt)
+}
+
+// removeHintTmpResidue deletes every leftover ".hint.tmp" file in dir
+// — the remains of a hint write interrupted by a crash. A residue file
+// is never read: publication goes through rename, so the final
+// ".hint" name is either absent or complete, and the tmp name carries
+// no information worth keeping.
+func removeHintTmpResidue(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return fmt.Errorf("engine: list %q for hint residue: %w", dir, err)
+	}
+	removed := false
+	for _, entry := range entries {
+		if !strings.HasSuffix(entry.Name(), hintFileExt+hintTmpSuffix) {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, entry.Name())); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("engine: remove hint residue %q: %w", entry.Name(), err)
+		}
+		removed = true
+	}
+	if removed {
+		return syncDir(dir)
+	}
+	return nil
 }
 
 // entrySizeFromHint returns the encoded size of the data entry a hint
