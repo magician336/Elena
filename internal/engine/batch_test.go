@@ -273,3 +273,172 @@ func TestBatchAfterClose(t *testing.T) {
 		t.Errorf("Commit after Close err = %v, want ErrClosed", err)
 	}
 }
+
+// Staging copies key and value: the batch must not alias the caller's
+// slices, or a caller mutating its buffers between staging and Commit
+// would silently change what gets committed.
+func TestBatchCopiesKeyAndValueAtStaging(t *testing.T) {
+	dir := t.TempDir()
+	eng := openEngine(t, dir)
+	defer closeEngine(t, eng)
+
+	key := []byte("mutating-key")
+	value := []byte("original")
+	b := eng.NewBatch()
+	if err := b.Put(key, value); err != nil {
+		t.Fatalf("batch Put failed: %v", err)
+	}
+	key[0] = 'M'
+	value[0] = 'X'
+	if err := b.Commit(); err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+
+	got, err := eng.Get([]byte("mutating-key"))
+	if err != nil {
+		t.Fatalf("Get(mutating-key) err = %v, want nil (the staged copy, not the mutated slice)", err)
+	}
+	if string(got) != "original" {
+		t.Errorf("Get after caller mutated its slices = %q, want %q", got, "original")
+	}
+}
+
+// A committed batch must survive Close/Open with every key and exact
+// value — the batch's single append is ordinary durable engine state,
+// so replay reconstructs it like any other write.
+func TestBatchSurvivesReopen(t *testing.T) {
+	dir := t.TempDir()
+	eng := openEngine(t, dir)
+
+	want := map[string]string{}
+	b := eng.NewBatch()
+	for i := 0; i < 15; i++ {
+		key := fmt.Sprintf("reopen-%03d", i)
+		value := fmt.Sprintf("value-%03d-%s", i, strings.Repeat("y", 3*i))
+		if err := b.Put([]byte(key), []byte(value)); err != nil {
+			t.Fatalf("batch Put(%q) failed: %v", key, err)
+		}
+		want[key] = value
+	}
+	if err := b.Delete([]byte("reopen-003")); err != nil {
+		t.Fatalf("batch Delete failed: %v", err)
+	}
+	delete(want, "reopen-003")
+	if err := b.Commit(); err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+	if err := eng.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	reopened := openEngine(t, dir)
+	defer closeEngine(t, reopened)
+	assertAllReadable(t, reopened, want)
+	if _, err := reopened.Get([]byte("reopen-003")); !errors.Is(err, engine.ErrNotFound) {
+		t.Errorf("Get(batch-deleted key) after reopen err = %v, want ErrNotFound", err)
+	}
+}
+
+// Batches mix with single writes on the same writer in strict call
+// order: every write — single or batched — takes effect exactly where
+// it was issued, and the last write per key wins. This is same-writer
+// serialization: call order is commit order.
+func TestBatchOrderingWithSingleWrites(t *testing.T) {
+	dir := t.TempDir()
+	eng := openEngine(t, dir)
+
+	key := []byte("shared")
+	step := func(put func() error, want string) {
+		t.Helper()
+		if err := put(); err != nil {
+			t.Fatalf("write failed: %v", err)
+		}
+		got, err := eng.Get(key)
+		if err != nil || string(got) != want {
+			t.Fatalf("after step wanting %q: Get = %q, %v", want, got, err)
+		}
+	}
+
+	// Each kind of write observes the one before it and is observed by
+	// the one after it.
+	step(func() error { return eng.Put(key, []byte("single-1")) }, "single-1")
+
+	b := eng.NewBatch()
+	if err := b.Put(key, []byte("batch-2")); err != nil {
+		t.Fatalf("batch Put failed: %v", err)
+	}
+	if err := b.Commit(); err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+	got, _ := eng.Get(key)
+	if string(got) != "batch-2" {
+		t.Fatalf("after batch Commit: Get(shared) = %q, want %q", got, "batch-2")
+	}
+
+	step(func() error { return eng.Put(key, []byte("single-3")) }, "single-3")
+
+	b2 := eng.NewBatch()
+	if err := b2.Delete(key); err != nil {
+		t.Fatalf("batch Delete failed: %v", err)
+	}
+	if err := b2.Commit(); err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+	if _, err := eng.Get(key); !errors.Is(err, engine.ErrNotFound) {
+		t.Fatalf("after batch Delete: Get err = %v, want ErrNotFound", err)
+	}
+
+	// A single write that runs while a batch sits staged lands first,
+	// then the batch overwrites it: staging order across mechanisms is
+	// still call order for the single writer.
+	b3 := eng.NewBatch()
+	if err := b3.Put(key, []byte("batch-5")); err != nil {
+		t.Fatalf("batch Put failed: %v", err)
+	}
+	step(func() error { return eng.Put(key, []byte("single-4")) }, "single-4")
+	if err := b3.Commit(); err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+	got, err := eng.Get(key)
+	if err != nil || string(got) != "batch-5" {
+		t.Fatalf("after staged-then-committed batch: Get(shared) = %q, %v; want %q", got, err, "batch-5")
+	}
+}
+
+// Committing an empty batch is a no-op (no bytes flushed), and a batch
+// is reusable after Commit: the next staged writes form a fresh batch.
+func TestBatchEmptyCommitAndReuse(t *testing.T) {
+	dir := t.TempDir()
+	eng := openEngine(t, dir)
+	defer closeEngine(t, eng)
+
+	b := eng.NewBatch()
+	before := eng.Stats().BytesFlushed
+	if err := b.Commit(); err != nil {
+		t.Fatalf("empty Commit failed: %v", err)
+	}
+	if after := eng.Stats().BytesFlushed; after != before {
+		t.Errorf("empty Commit flushed bytes: %d -> %d, want no change", before, after)
+	}
+
+	// First round.
+	if err := b.Put([]byte("round-1"), []byte("v1")); err != nil {
+		t.Fatalf("batch Put failed: %v", err)
+	}
+	if err := b.Commit(); err != nil {
+		t.Fatalf("first Commit failed: %v", err)
+	}
+	// Second round on the same batch object: the first round must not
+	// leak into it.
+	if err := b.Put([]byte("round-2"), []byte("v2")); err != nil {
+		t.Fatalf("batch Put failed: %v", err)
+	}
+	if err := b.Commit(); err != nil {
+		t.Fatalf("second Commit failed: %v", err)
+	}
+
+	assertAllReadable(t, eng, map[string]string{"round-1": "v1", "round-2": "v2"})
+	if got := eng.Stats().LiveEntries; got != 2 {
+		t.Errorf("LiveEntries after two reused-batch rounds = %d, want 2", got)
+	}
+}
