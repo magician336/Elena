@@ -48,6 +48,12 @@ func dataFileName(id uint32) string {
 const (
 	defaultMaxKeySize   = 1 << 10 // 1 KiB
 	defaultMaxValueSize = 4 << 20 // 4 MiB
+
+	// defaultMaxDataFileSize keeps files large enough that per-file
+	// costs (open, hint write, recovery scan) amortize over many
+	// entries, yet bounded so merge and recovery work in file-sized
+	// chunks instead of over one ever-growing file.
+	defaultMaxDataFileSize = 64 << 20 // 64 MiB
 )
 
 // Options configures an Engine at Open time. The zero value is valid
@@ -57,9 +63,16 @@ type Options struct {
 	// <= 0 select defaultMaxKeySize.
 	MaxKeySize int
 
-	// MaxValueSize is the largest accepted value length in bytes.
-	// Values <= 0 select defaultMaxValueSize.
+	// MaxValueSize is the largest value length in bytes. Values
+	// <= 0 select defaultMaxValueSize.
 	MaxValueSize int
+
+	// MaxDataFileSize is the size threshold that triggers rotation of
+	// the active data file: once the active file grows beyond this many
+	// bytes, it is closed as an immutable file and a new active file
+	// with the next monotonic file ID takes over. Values <= 0 select
+	// defaultMaxDataFileSize.
+	MaxDataFileSize int
 }
 
 // Engine is an embedded key-value storage engine rooted at a directory.
@@ -77,8 +90,9 @@ type Engine struct {
 
 	activeOffset int64 // end of the active file; written only under writeMu
 
-	maxKeySize   int
-	maxValueSize int
+	maxKeySize      int
+	maxValueSize    int
+	maxDataFileSize int
 
 	index map[string]entryRef
 
@@ -111,18 +125,22 @@ func Open(dir string, opts Options) (*Engine, error) {
 	}
 
 	eng := &Engine{
-		dir:          dir,
-		lockFile:     lockFile,
-		files:        make(map[uint32]*os.File),
-		maxKeySize:   opts.MaxKeySize,
-		maxValueSize: opts.MaxValueSize,
-		index:        make(map[string]entryRef),
+		dir:             dir,
+		lockFile:        lockFile,
+		files:           make(map[uint32]*os.File),
+		maxKeySize:      opts.MaxKeySize,
+		maxValueSize:    opts.MaxValueSize,
+		maxDataFileSize: opts.MaxDataFileSize,
+		index:           make(map[string]entryRef),
 	}
 	if eng.maxKeySize <= 0 {
 		eng.maxKeySize = defaultMaxKeySize
 	}
 	if eng.maxValueSize <= 0 {
 		eng.maxValueSize = defaultMaxValueSize
+	}
+	if eng.maxDataFileSize <= 0 {
+		eng.maxDataFileSize = defaultMaxDataFileSize
 	}
 
 	if err := eng.recoverFiles(); err != nil {

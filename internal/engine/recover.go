@@ -119,23 +119,35 @@ func (e *Engine) replayFile(f *os.File, id uint32) (int64, error) {
 	return off, nil
 }
 
-// createActive creates a brand-new data file for appends and syncs the
-// directory entry, so the file is guaranteed to survive a crash before
-// the first Put ack.
+// createActive creates a brand-new data file for appends, syncs the
+// directory entry (so the file is guaranteed to survive a crash before
+// the first Put ack), and registers it as the engine's open file for
+// id. Callers that must register under a lock (rotation, while readers
+// are live) use openNewDataFile plus their own registration instead.
 func (e *Engine) createActive(id uint32) error {
-	path := filepath.Join(e.dir, dataFileName(id))
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0o644)
+	f, err := e.openNewDataFile(id)
 	if err != nil {
-		return fmt.Errorf("engine: create data file %q: %w", path, err)
-	}
-	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		return fmt.Errorf("engine: sync new data file %q: %w", path, err)
-	}
-	if err := syncDir(e.dir); err != nil {
-		_ = f.Close()
 		return err
 	}
 	e.files[id] = f
 	return nil
+}
+
+// openNewDataFile creates and durably syncs a brand-new data file for
+// id without registering it in the engine's file set.
+func (e *Engine) openNewDataFile(id uint32) (*os.File, error) {
+	path := filepath.Join(e.dir, dataFileName(id))
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0o644)
+	if err != nil {
+		return nil, fmt.Errorf("engine: create data file %q: %w", path, err)
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("engine: sync new data file %q: %w", path, err)
+	}
+	if err := syncDir(e.dir); err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	return f, nil
 }

@@ -67,7 +67,7 @@ func (e *Engine) Put(key, value []byte) error {
 	e.index[string(key)] = entryRef{fileID: e.activeID, offset: offset, size: uint32(len(buf))}
 	e.activeOffset += int64(len(buf))
 	e.mu.Unlock()
-	return nil
+	return e.rotateIfDue()
 }
 
 // Get returns the value stored under key, or ErrNotFound when the key
@@ -116,7 +116,7 @@ func (e *Engine) Delete(key []byte) error {
 	delete(e.index, string(key))
 	e.activeOffset += int64(len(buf))
 	e.mu.Unlock()
-	return nil
+	return e.rotateIfDue()
 }
 
 // appendDurable writes buf to the active file and fdatasyncs it before
