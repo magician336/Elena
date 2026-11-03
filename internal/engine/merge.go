@@ -64,13 +64,14 @@ func (e *Engine) merge() error {
 }
 
 // mergeFrozen is the state Phase 1 freezes for one merge: the open
-// output file with its ID, the successor active file's ID, and the IDs
-// of every file the rewrite copies from.
+// output file with its ID and the IDs of every file the rewrite
+// copies from. The successor active file needs no entry here: once
+// the freeze completes, appends land in it and every later phase
+// leaves it alone (a merge only ever reclaims files it froze).
 type mergeFrozen struct {
-	out          *os.File
-	outID        uint32
-	nextActiveID uint32
-	merged       []uint32
+	out    *os.File
+	outID  uint32
+	merged []uint32
 }
 
 // freezeMergeSet is Phase 1 of the merge: freeze the merge set, open
@@ -124,7 +125,7 @@ func (e *Engine) freezeMergeSet() (frozen mergeFrozen, ok bool, err error) {
 	e.activeOffset = 0
 	e.mu.Unlock()
 
-	return mergeFrozen{out: out, outID: outID, nextActiveID: nextActiveID, merged: merged}, true, nil
+	return mergeFrozen{out: out, outID: outID, merged: merged}, true, nil
 }
 
 // switchToMerged is Phases 3 and 4 of the merge: atomically switch the
@@ -146,7 +147,15 @@ func (e *Engine) switchToMerged(frozen mergeFrozen, newRefs map[string]entryRef,
 	if e.closed {
 		e.mu.Unlock()
 		e.writeMu.Unlock()
-		e.discardMergeFiles(frozen.outID, frozen.nextActiveID)
+		// Keep nextActiveID on disk: it carries writes acknowledged
+		// after the freeze — already durable under the sync policy —
+		// and an acknowledged write must survive the aborted merge
+		// ("ack means durable"). Its ID is the highest on disk, so the
+		// reopen replay applies it last and its entries win. Only the
+		// output file is garbage: no reader ever saw it, and the old
+		// (merged) files still hold every pre-freeze write. Same shape
+		// as the rewrite-failure path above.
+		e.discardMergeFiles(frozen.outID)
 		return ErrClosed
 	}
 	for key, ref := range e.index {
