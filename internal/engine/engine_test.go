@@ -88,3 +88,40 @@ func TestCloseIsIdempotent(t *testing.T) {
 		t.Errorf("second Close() failed: %v", err)
 	}
 }
+
+// Open must fail with a clear error when the target path exists but is
+// a regular file, not a directory.
+func TestOpenOnNonDirectoryPathFails(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "not-a-dir.txt")
+	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+		t.Fatalf("create file: %v", err)
+	}
+
+	eng, err := engine.Open(path, engine.Options{})
+	if err == nil {
+		eng.Close()
+		t.Fatal("Open on a regular file must fail")
+	}
+	if errors.Is(err, engine.ErrDirectoryLocked) {
+		t.Errorf("Open on a regular file must not report ErrDirectoryLocked, got: %v", err)
+	}
+}
+
+// Open must fail with a clear error when the directory exists but is
+// not writable, so the lock file cannot be created.
+func TestOpenOnUnwritableDirectoryFails(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatalf("chmod read-only: %v", err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o755) })
+
+	eng, err := engine.Open(dir, engine.Options{})
+	if err == nil {
+		eng.Close()
+		t.Fatal("Open on an unwritable directory must fail")
+	}
+	if errors.Is(err, engine.ErrDirectoryLocked) {
+		t.Errorf("Open on an unwritable directory must not report ErrDirectoryLocked, got: %v", err)
+	}
+}
