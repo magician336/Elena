@@ -50,3 +50,41 @@ func TestOpenSecondInstanceOnSameDirectoryFails(t *testing.T) {
 		t.Error("second Open must not return an engine on failure")
 	}
 }
+
+// Close must release the directory lock so the same directory can be
+// opened again afterwards.
+func TestCloseReleasesDirectoryLock(t *testing.T) {
+	dir := t.TempDir()
+
+	eng, err := engine.Open(dir, engine.Options{})
+	if err != nil {
+		t.Fatalf("Open(%q) failed: %v", dir, err)
+	}
+	if err := eng.Close(); err != nil {
+		t.Fatalf("Close() failed: %v", err)
+	}
+
+	reopened, err := engine.Open(dir, engine.Options{})
+	if err != nil {
+		t.Fatalf("Open(%q) after Close failed: %v", dir, err)
+	}
+	if err := reopened.Close(); err != nil {
+		t.Errorf("Close() of reopened engine failed: %v", err)
+	}
+}
+
+// Close must be safe to call more than once on the same Engine.
+func TestCloseIsIdempotent(t *testing.T) {
+	dir := t.TempDir()
+
+	eng, err := engine.Open(dir, engine.Options{})
+	if err != nil {
+		t.Fatalf("Open(%q) failed: %v", dir, err)
+	}
+	if err := eng.Close(); err != nil {
+		t.Fatalf("first Close() failed: %v", err)
+	}
+	if err := eng.Close(); err != nil {
+		t.Errorf("second Close() failed: %v", err)
+	}
+}

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"syscall"
 )
 
@@ -32,6 +33,9 @@ type Options struct{}
 type Engine struct {
 	dir      string
 	lockFile *os.File
+
+	mu     sync.Mutex
+	closed bool
 }
 
 // Open opens the storage directory rooted at dir, creating it (and any
@@ -59,11 +63,15 @@ func Open(dir string, opts Options) (*Engine, error) {
 }
 
 // Close releases all resources held by the Engine, including the
-// directory lock.
+// directory lock. It is safe to call Close more than once.
 func (e *Engine) Close() error {
-	if e.lockFile == nil {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.closed {
 		return nil
 	}
+	e.closed = true
+
 	if err := syscall.Flock(int(e.lockFile.Fd()), syscall.LOCK_UN); err != nil {
 		return fmt.Errorf("engine: unlock %q: %w", filepath.Join(e.dir, lockFileName), err)
 	}
