@@ -19,8 +19,8 @@ func TestPutGetRoundTrip(t *testing.T) {
 	}
 	defer closeEngine(t, eng)
 
-	const key = "session-42"
-	const value = "checkpoint blob"
+	const key = "user-42"
+	const value = "blob-1"
 
 	if err := eng.Put([]byte(key), []byte(value)); err != nil {
 		t.Fatalf("Put(%q) failed: %v", key, err)
@@ -73,7 +73,7 @@ func TestPutGetAssortedValues(t *testing.T) {
 	}{
 		{"empty value", "empty", []byte{}},
 		{"binary value", "binary", []byte{0x00, 0xff, 0x0a, 0x1b, 0x00, 0x7f}},
-		{"unicode key and value", "键/trajectory", []byte("值·チェックポイント")},
+		{"unicode key and value", "键/events", []byte("值·データ")},
 		{"long value", "long", bytesOfLength(4096)},
 	}
 	for _, tt := range tests {

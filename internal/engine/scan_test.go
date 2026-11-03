@@ -85,16 +85,16 @@ func TestScanPrefixFiltersKeys(t *testing.T) {
 	eng := openEngine(t, dir)
 	defer closeEngine(t, eng)
 
-	scanFixture(t, eng, "ns2:cherry", "ns1:apple", "other", "ns1:banana", "ns1", "ns1x")
+	scanFixture(t, eng, "logs:cherry", "events:apple", "other", "events:banana", "events", "eventsx")
 
 	tests := []struct {
 		name   string
 		prefix string
 		want   []string
 	}{
-		{"namespace prefix", "ns1:", []string{"ns1:apple", "ns1:banana"}},
-		{"prefix without colon matches bare and extended", "ns1", []string{"ns1", "ns1:apple", "ns1:banana", "ns1x"}},
-		{"empty prefix matches everything", "", []string{"ns1", "ns1:apple", "ns1:banana", "ns1x", "ns2:cherry", "other"}},
+		{"prefix with delimiter", "events:", []string{"events:apple", "events:banana"}},
+		{"prefix without delimiter matches bare and extended", "events", []string{"events", "events:apple", "events:banana", "eventsx"}},
+		{"empty prefix matches everything", "", []string{"events", "events:apple", "events:banana", "eventsx", "logs:cherry", "other"}},
 		{"no match", "zzz", nil},
 	}
 	for _, tt := range tests {

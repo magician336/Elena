@@ -34,16 +34,16 @@ func TestPutWithTTLValueReadableBeforeExpiry(t *testing.T) {
 	}
 	defer closeEngine(t, eng)
 
-	if err := eng.PutWithTTL([]byte("session-42"), []byte("checkpoint blob"), 10*time.Second); err != nil {
+	if err := eng.PutWithTTL([]byte("user-42"), []byte("blob-1"), 10*time.Second); err != nil {
 		t.Fatalf("PutWithTTL failed: %v", err)
 	}
 
-	got, err := eng.Get([]byte("session-42"))
+	got, err := eng.Get([]byte("user-42"))
 	if err != nil {
 		t.Fatalf("Get after PutWithTTL failed: %v", err)
 	}
-	if string(got) != "checkpoint blob" {
-		t.Errorf("Get after PutWithTTL = %q, want %q", got, "checkpoint blob")
+	if string(got) != "blob-1" {
+		t.Errorf("Get after PutWithTTL = %q, want %q", got, "blob-1")
 	}
 }
 
