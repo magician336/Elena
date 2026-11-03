@@ -41,29 +41,24 @@ func runWriterChild() int {
 		return fail(err)
 	}
 
-	eng, err := engine.Open(spec.Dir, engine.Options{})
+	opts := engine.Options{}
+	if spec.RotateEvery > 0 {
+		// Real engine rotation: size the threshold so the active file
+		// turns roughly every RotateEvery puts (the dataset's entries
+		// all share one size, see writerRotateThreshold).
+		opts.MaxDataFileSize = writerRotateThreshold(spec)
+	}
+	eng, err := engine.Open(spec.Dir, opts)
 	if err != nil {
 		return fail(fmt.Errorf("open %q: %w", spec.Dir, err))
 	}
-	for i, w := range WriterDataset(spec) {
+	for _, w := range WriterDataset(spec) {
 		if err := eng.Put([]byte(w.Key), w.Value); err != nil {
 			return fail(fmt.Errorf("put %q: %w", w.Key, err))
 		}
 		// Ack only after Put has returned.
 		if _, err := fmt.Fprintln(os.Stdout, w.Key); err != nil {
 			return fail(fmt.Errorf("ack %q: %w", w.Key, err))
-		}
-		if spec.RotateEvery > 0 && (i+1)%spec.RotateEvery == 0 && i+1 < spec.Writes {
-			if err := eng.Close(); err != nil {
-				return fail(fmt.Errorf("close for rotation: %w", err))
-			}
-			if err := duplicateNewestDataFile(spec.Dir); err != nil {
-				return fail(fmt.Errorf("rotate: %w", err))
-			}
-			eng, err = engine.Open(spec.Dir, engine.Options{})
-			if err != nil {
-				return fail(fmt.Errorf("reopen after rotation: %w", err))
-			}
 		}
 	}
 	if err := eng.Close(); err != nil {

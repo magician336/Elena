@@ -11,9 +11,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
-	"strings"
 	"syscall"
 	"testing"
 )
@@ -60,7 +58,6 @@ const (
 	writerValueSizeEnv     = "ELENA_TEST_WRITER_VALUE_SIZE"
 	writerRotateEveryEnv   = "ELENA_TEST_WRITER_ROTATE_EVERY"
 	skipKill9Env           = "ELENA_TEST_SKIP_KILL9"
-	testDataFileExt        = ".log"
 	writerDatasetStreamPCG = 0x656c656e61 // fixed PCG stream id ("elena"): a seed fully determines the dataset
 )
 
@@ -82,11 +79,12 @@ type WriterSpec struct {
 	// Seed selects the deterministic key/value dataset.
 	Seed int64
 
-	// RotateEvery, when > 0, makes the child simulate a rotation round
-	// after every RotateEvery acknowledged puts: it closes the engine,
-	// duplicates the newest data file under the next file ID (a fixture
-	// stand-in until real rotation arrives), and reopens. The kill then
-	// lands across several data files.
+	// RotateEvery, when > 0, asks the engine to rotate the active data
+	// file after roughly every RotateEvery acknowledged puts: the child
+	// derives a MaxDataFileSize from the dataset's fixed entry size so
+	// real engine rotation spreads the writes across several data
+	// files, each sealed with a hint file. The kill can then land
+	// mid-rotation, mid-hint-write, or anywhere between files.
 	RotateEvery int
 }
 
@@ -249,52 +247,13 @@ func waitKilledBySIGKILL(t *testing.T, cmd *exec.Cmd, killErr error, stderr *byt
 	}
 }
 
-// countDataFiles returns how many engine data files dir currently
-// holds (fixture sanity for multi-file scenarios; assertions on data
-// itself still go through the public API).
-func countDataFiles(t *testing.T, dir string) int {
-	t.Helper()
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatalf("read dir %q: %v", dir, err)
-	}
-	n := 0
-	for _, e := range entries {
-		if filepath.Ext(e.Name()) == testDataFileExt {
-			n++
-		}
-	}
-	return n
-}
-
-// duplicateNewestDataFile copies the newest data file in dir under the
-// next file ID, so the following Open appends to a brand-new data file
-// and the previous one becomes immutable. This is a fixture stand-in
-// for rotation (real rotation arrives with the hint-file ticket); the
-// child performs it between engine lifetimes, never behind a live
-// engine's back.
-func duplicateNewestDataFile(dir string) error {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return fmt.Errorf("list %q: %w", dir, err)
-	}
-	maxID := -1
-	for _, e := range entries {
-		if filepath.Ext(e.Name()) != testDataFileExt {
-			continue
-		}
-		id, err := strconv.Atoi(strings.TrimSuffix(e.Name(), testDataFileExt))
-		if err != nil {
-			continue
-		}
-		if id > maxID {
-			maxID = id
-		}
-	}
-	if maxID < 0 {
-		return fmt.Errorf("no data file found in %q", dir)
-	}
-	src := filepath.Join(dir, fmt.Sprintf("%010d%s", maxID, testDataFileExt))
-	dst := filepath.Join(dir, fmt.Sprintf("%010d%s", maxID+1, testDataFileExt))
-	return copyFile(src, dst)
+// writerRotateThreshold returns the MaxDataFileSize that makes the
+// engine rotate after about spec.RotateEvery puts. The dataset's keys
+// all have the same length ("0000-key-000000" = 15 bytes) and values
+// share spec.ValueSize, so every entry encodes to the same footprint
+// and the threshold maps cleanly onto a put count.
+func writerRotateThreshold(spec WriterSpec) int {
+	const writerKeySize = 15
+	entrySize := 28 + writerKeySize + spec.ValueSize // header + key + value
+	return spec.RotateEvery * entrySize
 }

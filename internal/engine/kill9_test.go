@@ -48,18 +48,20 @@ func TestKill9AllAckedWritesSurvive(t *testing.T) {
 }
 
 // The same claim must hold when the acked writes span several data
-// files: the child simulates rotation rounds (close, duplicate the
-// newest data file under the next ID, reopen — real rotation arrives in
-// a later ticket), so recovery must replay several files in order and
-// route reads across them.
+// files: the child's engine rotates its active file for real (a small
+// MaxDataFileSize), so recovery must replay several files — hinted and
+// unhinted alike — in order and route reads across them. The kill can
+// land while a rotation is writing a hint file; the reopened engine
+// must survive that with the hint fast path and its full-scan
+// fallback.
 func TestKill9AcrossDataFileRounds(t *testing.T) {
 	dir := t.TempDir()
 	spec := WriterSpec{Dir: dir, Writes: 300, ValueSize: 96, Seed: 2, RotateEvery: 40}
 
 	acked := KillWriterAfterAcks(t, spec, 100)
 
-	if got := countDataFiles(t, dir); got < 3 {
-		t.Fatalf("fixture sanity: want at least 3 data files from rotation rounds at kill time, got %d", got)
+	if got := countDataFilesIn(t, dir); got < 3 {
+		t.Fatalf("fixture sanity: want at least 3 data files from real rotations at kill time, got %d", got)
 	}
 
 	eng := openEngine(t, dir)
