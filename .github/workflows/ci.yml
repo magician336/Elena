@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main, engine-core]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: latest
+
+  test:
+    name: Test (race + coverage gate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+      - name: Run tests with race detector and coverage
+        run: make cov
+      - name: Enforce coverage gate (>= 80%)
+        run: |
+          go tool cover -func=coverage.out
+          total="$(go tool cover -func=coverage.out | awk '/^total:/ { gsub(/%/, "", $3); print $3 }')"
+          echo "Total coverage: ${total}%"
+          awk -v c="$total" 'BEGIN { if (c < 80) { printf "coverage %.1f%% is below the 80%% gate\n", c; exit 1 } }'
