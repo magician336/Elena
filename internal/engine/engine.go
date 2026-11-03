@@ -18,6 +18,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"syscall"
+	"time"
 )
 
 // ErrDirectoryLocked is returned by Open when the target directory is
@@ -87,6 +88,20 @@ type Options struct {
 	// can never exceed 1. Exactly 1 merges whenever any dead byte
 	// exists.
 	MergeDeadRatio float64
+
+	// SyncPolicy selects when appended entries are fdatasync'ed: always
+	// (per write, the default), interval (background group commit), or
+	// none (never). The choice is fixed for the lifetime of the Engine
+	// this Open creates; see the SyncPolicy doc comment for the exact
+	// acknowledgment and loss-window semantics of each tier. Unknown
+	// values are rejected at Open.
+	SyncPolicy SyncPolicy
+
+	// SyncPeriod is the group-commit period of the SyncInterval policy:
+	// the background flusher fdatasyncs the active data file once per
+	// period. Values <= 0 select defaultSyncPeriod (10ms). It is ignored
+	// by the other policies.
+	SyncPeriod time.Duration
 }
 
 // dataFile couples an open data file with the per-file accounting
@@ -158,6 +173,12 @@ type Engine struct {
 	maxDataFileSize int
 	mergeDeadRatio  float64
 
+	// syncPolicy and syncPeriod are copied from Options at Open and
+	// never change afterwards: the sync tier is a property of the
+	// instance, not of any single call.
+	syncPolicy SyncPolicy
+	syncPeriod time.Duration
+
 	index map[string]entryRef
 
 	// liveBytes is the encoded size of the entries the index points at,
@@ -200,6 +221,9 @@ func Open(dir string, opts Options) (*Engine, error) {
 	if opts.MergeDeadRatio > 1 {
 		return nil, fmt.Errorf("engine: open %q: Options.MergeDeadRatio %v is above 1 (the dead share cannot exceed 1)", dir, opts.MergeDeadRatio)
 	}
+	if err := opts.SyncPolicy.validate(); err != nil {
+		return nil, fmt.Errorf("engine: open %q: %w", dir, err)
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("engine: create storage directory %q: %w", dir, err)
 	}
@@ -225,7 +249,12 @@ func Open(dir string, opts Options) (*Engine, error) {
 		maxValueSize:    opts.MaxValueSize,
 		maxDataFileSize: opts.MaxDataFileSize,
 		mergeDeadRatio:  opts.MergeDeadRatio,
+		syncPolicy:      opts.SyncPolicy,
+		syncPeriod:      opts.SyncPeriod,
 		index:           make(map[string]entryRef),
+	}
+	if eng.syncPeriod <= 0 {
+		eng.syncPeriod = defaultSyncPeriod
 	}
 	if eng.maxKeySize <= 0 {
 		eng.maxKeySize = defaultMaxKeySize
