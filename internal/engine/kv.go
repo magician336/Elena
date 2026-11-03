@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
 	"syscall"
 	"time"
 )
@@ -86,10 +87,14 @@ func (e *Engine) putExpires(key, value []byte, expires int64) error {
 	e.mu.RLock()
 	closed := e.closed
 	offset := e.activeOffset
-	maxKey, maxVal := e.maxKeySize, e.maxValueSize
+	active := e.files[e.activeID]
+	maxKey, maxVal, maxSize := e.maxKeySize, e.maxValueSize, e.maxDataFileSize
 	e.mu.RUnlock()
 	if closed {
 		return ErrClosed
+	}
+	if active == nil {
+		return fmt.Errorf("engine: active data file %d not open for append", e.activeID)
 	}
 	if len(key) > maxKey {
 		return fmt.Errorf("engine: put key of %d bytes: %w (max %d)", len(key), ErrKeyTooLarge, maxKey)
@@ -99,7 +104,7 @@ func (e *Engine) putExpires(key, value []byte, expires int64) error {
 	}
 
 	buf := appendValueEntry(nil, time.Now().UnixNano(), expires, key, value)
-	if err := e.appendDurable(buf); err != nil {
+	if err := e.appendDurable(active.f, buf); err != nil {
 		return err
 	}
 	e.bytesWritten.Add(uint64(len(key) + len(value)))
@@ -108,8 +113,12 @@ func (e *Engine) putExpires(key, value []byte, expires int64) error {
 	e.index[string(key)] = entryRef{fileID: e.activeID, offset: offset, size: uint32(len(buf))}
 	e.files[e.activeID].entries++
 	e.activeOffset += int64(len(buf))
+	rotate := e.activeOffset > int64(maxSize)
 	e.mu.Unlock()
-	return e.rotateIfDue()
+	if rotate {
+		return e.rotateActive()
+	}
+	return nil
 }
 
 // Get returns the value stored under key, or ErrNotFound when the key
@@ -142,17 +151,21 @@ func (e *Engine) Delete(key []byte) error {
 
 	e.mu.RLock()
 	closed := e.closed
-	maxKey := e.maxKeySize
+	active := e.files[e.activeID]
+	maxKey, maxSize := e.maxKeySize, e.maxDataFileSize
 	e.mu.RUnlock()
 	if closed {
 		return ErrClosed
+	}
+	if active == nil {
+		return fmt.Errorf("engine: active data file %d not open for append", e.activeID)
 	}
 	if len(key) > maxKey {
 		return fmt.Errorf("engine: delete key of %d bytes: %w (max %d)", len(key), ErrKeyTooLarge, maxKey)
 	}
 
 	buf := appendTombstoneEntry(nil, time.Now().UnixNano(), key)
-	if err := e.appendDurable(buf); err != nil {
+	if err := e.appendDurable(active.f, buf); err != nil {
 		return err
 	}
 
@@ -160,15 +173,21 @@ func (e *Engine) Delete(key []byte) error {
 	delete(e.index, string(key))
 	e.files[e.activeID].entries++
 	e.activeOffset += int64(len(buf))
+	rotate := e.activeOffset > int64(maxSize)
 	e.mu.Unlock()
-	return e.rotateIfDue()
+	if rotate {
+		return e.rotateActive()
+	}
+	return nil
 }
 
 // appendDurable writes buf to the active file and fdatasyncs it before
 // returning, so the bytes are on disk by the time the caller's Put is
-// acknowledged. The caller must hold writeMu.
-func (e *Engine) appendDurable(buf []byte) error {
-	active := e.files[e.activeID].f
+// acknowledged. The caller must hold writeMu and must have captured
+// the handle under mu in the same critical section that produced the
+// append offset (a merge swaps the active file only under writeMu, so
+// the pair stays coherent).
+func (e *Engine) appendDurable(active *os.File, buf []byte) error {
 	n, err := active.Write(buf)
 	if err != nil {
 		return fmt.Errorf("engine: append to data file: %w", err)

@@ -59,6 +59,11 @@ func (e *Engine) Scan(opts ScanOptions, visit func(key, value []byte) error) err
 	if err != nil {
 		return err
 	}
+	defer func() {
+		for _, it := range items {
+			it.f.release()
+		}
+	}()
 
 	for _, it := range items {
 		value, err := readLiveEntry(it.f.f, it.ref, it.key)
@@ -78,9 +83,11 @@ func (e *Engine) Scan(opts ScanOptions, visit func(key, value []byte) error) err
 // snapshotItems copies the matching index entries — key, location, and
 // data file handle — under the read lock, then returns them sorted by
 // key. The lock is held only for the copy: appends never rewrite the
-// bytes an existing entry occupies and rotated files stay open, so the
-// captured items stay readable after the lock is released even while
-// writers keep running.
+// bytes an existing entry occupies, and every file handle stays open
+// for at least as long as a snapshot holds a reference (a merge that
+// retires a handle waits for the last such reader), so the captured
+// items stay readable after the lock is released even while writers
+// and merges keep running.
 func (e *Engine) snapshotItems(opts ScanOptions) ([]scanItem, error) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -102,8 +109,12 @@ func (e *Engine) snapshotItems(opts ScanOptions) ([]scanItem, error) {
 		}
 		f, ok := e.files[ref.fileID]
 		if !ok {
+			for _, it := range items { // release what this snapshot already pinned
+				it.f.release()
+			}
 			return nil, fmt.Errorf("engine: data file %d for key %q: %w", ref.fileID, key, ErrCorrupted)
 		}
+		f.acquire()
 		items = append(items, scanItem{key: key, ref: ref, f: f})
 	}
 	slices.SortFunc(items, func(a, b scanItem) int { return strings.Compare(a.key, b.key) })

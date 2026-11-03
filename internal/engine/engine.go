@@ -77,13 +77,47 @@ type Options struct {
 }
 
 // dataFile couples an open data file with the per-file accounting
-// Stats publishes. The entries count covers every encoded entry the
-// file holds, live and dead; it is guarded by Engine.mu (appends count
-// under mu in the write path, replay counts at Open).
+// Stats publishes and the handle lifecycle a merge interacts with.
+//
+// The entries count covers every encoded entry the file holds, live
+// and dead; it is guarded by Engine.mu (appends count under mu in the
+// write path, replay counts at Open).
+//
+// Handle lifecycle: while the file is in the engine's file set, Gets
+// read through it under mu and Scans may snapshot it. A merge that
+// reclaims the file marks it retired and removes it from the file set
+// (under mu, so new snapshots stop referring to it), but an in-flight
+// Scan may still be reading through the handle — the scanRefs
+// counter tracks those readers, and the handle closes exactly once,
+// when the file is retired and the last reader is done (or at Close
+// at the latest).
 type dataFile struct {
-	f *os.File
+	f       *os.File
+	entries uint64 // guarded by Engine.mu
 
-	entries uint64
+	scanRefs  atomic.Int32
+	retired   atomic.Bool
+	closeOnce sync.Once
+	closeErr  error
+}
+
+// acquire registers one in-flight scan reader; called under mu while
+// the file is still in the engine's file set.
+func (df *dataFile) acquire() { df.scanRefs.Add(1) }
+
+// release drops one in-flight scan reader and closes the handle if it
+// just became unused and the file was retired meanwhile.
+func (df *dataFile) release() {
+	if df.scanRefs.Add(-1) == 0 && df.retired.Load() {
+		_ = df.close()
+	}
+}
+
+// close closes the handle exactly once and reports the (cached)
+// result of that first close.
+func (df *dataFile) close() error {
+	df.closeOnce.Do(func() { df.closeErr = df.f.Close() })
+	return df.closeErr
 }
 
 // Engine is an embedded key-value storage engine rooted at a directory.
@@ -119,10 +153,10 @@ type Engine struct {
 	bytesWritten  atomic.Uint64 // logical key+value bytes accepted
 	bytesFlushed  atomic.Uint64 // encoded entry bytes appended
 
-	// mergeMu serializes Merge calls; retired holds data file handles a
-	// merge took out of the file set while a Scan snapshot may still be
-	// reading through them (closed at Close at the latest). Lock order:
-	// mergeMu before writeMu before mu.
+	// mergeMu serializes Merge calls; retired holds the handles of
+	// merged-away files that an in-flight scan still reads through
+	// (each closes when its last reader is done; Close is the
+	// backstop). Lock order: mergeMu before writeMu before mu.
 	mergeMu sync.Mutex
 	retired []*dataFile
 
@@ -270,20 +304,20 @@ func (e *Engine) Close() error {
 	// writeMu through Close), so publish its hint while the file handle
 	// is still open. A hint failure does not prevent the release of
 	// resources; Open falls back to scanning the data file.
-	if err := e.writeHintFile(e.activeID); err != nil && firstErr == nil {
-		firstErr = err
+	if df := e.files[e.activeID]; df != nil {
+		if err := e.writeHintFile(e.activeID, df.f); err != nil && firstErr == nil {
+			firstErr = err
+		}
 	}
 
 	for id, df := range e.files {
-		if err := df.f.Close(); err != nil && firstErr == nil {
+		if err := df.close(); err != nil && firstErr == nil {
 			firstErr = fmt.Errorf("engine: close data file %d: %w", id, err)
 		}
 		delete(e.files, id)
 	}
 	for _, df := range e.retired {
-		// Already closed handles (Close is idempotent per call site
-		// because retired entries are removed once fully retired).
-		if err := df.f.Close(); err != nil && firstErr == nil {
+		if err := df.close(); err != nil && firstErr == nil {
 			firstErr = fmt.Errorf("engine: close retired data file: %w", err)
 		}
 	}

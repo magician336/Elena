@@ -97,21 +97,18 @@ func hintRecordCRC(header, key []byte) uint32 {
 	return crc32.Update(crc32.ChecksumIEEE(header[4:]), crc32.IEEETable, key)
 }
 
-// writeHintFile durably writes the hint file for the data file id by
-// scanning the data file entry by entry. The scan validates each
+// writeHintFile durably writes the hint file for the data file id,
+// whose open handle the caller passes in (captured under mu; the
+// caller must also hold writeMu or otherwise guarantee the file's
+// contents are final: rotation or Close). The scan validates each
 // entry's checksum, so a hint is only ever published for a file whose
 // entries all verify. The hint is written to a temporary name, synced,
 // then renamed into place, so a crash can leave at worst a missing or
 // stale-cursor hint — never a half-written one that looks valid.
-//
-// The caller must hold writeMu (the data file's contents must be final
-// before this runs: rotation or Close).
-func (e *Engine) writeHintFile(id uint32) error {
-	df := e.files[id]
-	if df == nil {
+func (e *Engine) writeHintFile(id uint32, data *os.File) error {
+	if data == nil {
 		return fmt.Errorf("engine: data file %d not open for hint write", id)
 	}
-	data := df.f
 	info, err := data.Stat()
 	if err != nil {
 		return fmt.Errorf("engine: stat data file %d for hint write: %w", id, err)

@@ -20,12 +20,13 @@ import (
 // writeMu freezes the merge set (every current file — the active one
 // included, by rotating it away) and opens two new files: the merge
 // output and the successor active file. The rewrite itself holds no
-// engine lock. One short section under mu then swaps the index to the
-// output file; readers observe either the old or the new location of
-// every key, never a mix. Writers that raced ahead into the successor
-// active file are untouched by the swap. Merge calls are serialized
-// per engine by mergeMu; lock order is mergeMu before writeMu before
-// mu.
+// engine lock. One short section under writeMu+mu then swaps the index
+// to the output file (writeMu because a racing append captured its
+// offset and handle under mu alone; mu so readers observe either the
+// old or the new location of every key, never a mix). Writers that
+// raced ahead into the successor active file are untouched by the
+// swap. Merge calls are serialized per engine by mergeMu; lock order
+// is mergeMu before writeMu before mu.
 //
 // Crash safety: the output data file and its hint are durably on disk
 // before the switch, and both the output and the old files carry a
@@ -33,10 +34,10 @@ import (
 // point leaves a directory that reopens to the same live set (the
 // leftover files are simply reclaimed by the next merge).
 //
-// The old files' descriptors are retired rather than closed on the
-// spot: a Scan that snapshotted them moments earlier may still be
-// reading through them. They are closed when the last such reader is
-// done or, at the latest, at Close.
+// The old files' handles are retired rather than closed on the spot:
+// a Scan that snapshotted them moments earlier may still be reading
+// through them. Each handle closes when its last reader is done, or at
+// Close at the latest; see dataFile.
 func (e *Engine) Merge() error {
 	e.mergeMu.Lock()
 	defer e.mergeMu.Unlock()
@@ -102,14 +103,20 @@ func (e *Engine) merge() error {
 		return err
 	}
 
-	// ---- Phase 3: atomic index switch. Short, under mu. ----
+	// ---- Phase 3: atomic index switch. Short, under writeMu+mu: the
+	// writeMu grab keeps a concurrent append (which captured the old
+	// active handle and offset under mu alone) from racing the swap,
+	// and the mu grab keeps readers from observing a half-switched
+	// index. ----
 	mergedSet := make(map[uint32]struct{}, len(merged))
 	for _, id := range merged {
 		mergedSet[id] = struct{}{}
 	}
+	e.writeMu.Lock()
 	e.mu.Lock()
 	if e.closed {
 		e.mu.Unlock()
+		e.writeMu.Unlock()
 		e.discardMergeFiles(outID, nextActiveID)
 		return ErrClosed
 	}
@@ -124,11 +131,21 @@ func (e *Engine) merge() error {
 		}
 	}
 	for _, id := range merged {
-		e.retired = append(e.retired, e.files[id])
+		df := e.files[id]
 		delete(e.files, id)
+		df.retired.Store(true)
+		if df.scanRefs.Load() == 0 {
+			// No scan is reading through it; the handle closes now.
+			_ = df.close()
+		} else {
+			// An in-flight scan still reads through the handle; the
+			// last reader closes it (Close is the backstop).
+			e.retired = append(e.retired, df)
+		}
 	}
 	e.files[outID].entries = uint64(len(newRefs))
 	e.mu.Unlock()
+	e.writeMu.Unlock()
 
 	// ---- Phase 4: the old files are unreferenced; drop them. ----
 	var firstErr error
@@ -252,7 +269,7 @@ func (e *Engine) discardMergeFiles(ids ...uint32) {
 	e.mu.Lock()
 	for _, id := range ids {
 		if df := e.files[id]; df != nil {
-			_ = df.f.Close()
+			_ = df.close()
 			delete(e.files, id)
 		}
 	}
