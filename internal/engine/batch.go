@@ -35,12 +35,13 @@ type Batch struct {
 }
 
 // batchOp is one accumulated write. key is an immutable copy;
-// value is an immutable copy. expires is the Unix-nanosecond
-// deadline captured when the op was added (0 = never).
+// value is an immutable copy, nil for tombstones. expires is the
+// Unix-nanosecond deadline captured when the op was added (0 = never).
 type batchOp struct {
-	key     string
-	value   []byte
-	expires int64
+	key       string
+	value     []byte
+	expires   int64
+	tombstone bool
 }
 
 // NewBatch returns an empty Batch bound to this Engine.
@@ -52,12 +53,20 @@ func (e *Engine) NewBatch() *Batch {
 // when the batch is committed. The key and value are copied, so the
 // caller may reuse their slices afterwards.
 func (b *Batch) Put(key, value []byte) error {
-	return b.stage(key, value, 0)
+	return b.stage(key, value, 0, false)
+}
+
+// Delete stages a tombstone for key: at Commit the key disappears from
+// readers' point of view, and the tombstone entry rides in the batch's
+// single durable append. Deleting a key that does not exist is not an
+// error. The key is copied.
+func (b *Batch) Delete(key []byte) error {
+	return b.stage(key, nil, 0, true)
 }
 
 // stage validates and records one op. Validation happens at staging
 // time so a rejected op leaves no trace and the batch stays clean.
-func (b *Batch) stage(key, value []byte, expires int64) error {
+func (b *Batch) stage(key, value []byte, expires int64, tombstone bool) error {
 	e := b.eng
 	e.mu.RLock()
 	closed := e.closed
@@ -69,8 +78,12 @@ func (b *Batch) stage(key, value []byte, expires int64) error {
 	if len(key) > maxKey {
 		return fmt.Errorf("engine: batch key of %d bytes: %w (max %d)", len(key), ErrKeyTooLarge, maxKey)
 	}
-	if len(value) > maxVal {
+	if !tombstone && len(value) > maxVal {
 		return fmt.Errorf("engine: batch value of %d bytes: %w (max %d)", len(value), ErrValueTooLarge, maxVal)
+	}
+	if tombstone {
+		b.ops = append(b.ops, batchOp{key: string(key), tombstone: true})
+		return nil
 	}
 	b.ops = append(b.ops, batchOp{
 		key:     string(key),
@@ -121,8 +134,12 @@ func (b *Batch) Commit() error {
 	for i := range b.ops {
 		op := &b.ops[i]
 		start := len(buf)
-		buf = appendValueEntry(buf, now, op.expires, []byte(op.key), op.value)
-		logical += uint64(len(op.key) + len(op.value))
+		if op.tombstone {
+			buf = appendTombstoneEntry(buf, now, []byte(op.key))
+		} else {
+			buf = appendValueEntry(buf, now, op.expires, []byte(op.key), op.value)
+			logical += uint64(len(op.key) + len(op.value))
+		}
 		sizes = append(sizes, uint32(len(buf)-start))
 	}
 
@@ -139,11 +156,18 @@ func (b *Batch) Commit() error {
 	for i := range b.ops {
 		op := &b.ops[i]
 		size := sizes[i]
-		if old, ok := e.index[op.key]; ok {
-			e.liveBytes -= uint64(old.size)
+		if op.tombstone {
+			if old, ok := e.index[op.key]; ok {
+				e.liveBytes -= uint64(old.size)
+				delete(e.index, op.key)
+			}
+		} else {
+			if old, ok := e.index[op.key]; ok {
+				e.liveBytes -= uint64(old.size)
+			}
+			e.index[op.key] = entryRef{fileID: e.activeID, offset: off, size: size}
+			e.liveBytes += uint64(size)
 		}
-		e.index[op.key] = entryRef{fileID: e.activeID, offset: off, size: size}
-		e.liveBytes += uint64(size)
 		off += int64(size)
 	}
 	active.entries += uint64(len(b.ops))
