@@ -45,12 +45,12 @@ func (e *Engine) loadDataFile(id uint32) error {
 		return fmt.Errorf("engine: stat data file %q: %w", path, err)
 	}
 
-	covered, hinted := e.loadFromHint(id, info.Size())
+	covered, hintedRecords, hinted := e.loadFromHint(id, info.Size())
 	if !hinted {
 		covered = 0
 	}
 
-	cleanOffset, err := e.replayFile(f, id, covered)
+	cleanOffset, scanned, err := e.replayFile(f, id, covered)
 	if err != nil {
 		_ = f.Close()
 		return err
@@ -70,7 +70,7 @@ func (e *Engine) loadDataFile(id uint32) error {
 		}
 	}
 
-	e.files[id] = f
+	e.files[id] = &dataFile{f: f, entries: uint64(hintedRecords + scanned)}
 	// Files load in ascending ID order and the last one becomes the
 	// active file, so track its clean end as the append position.
 	e.activeOffset = cleanOffset
@@ -79,24 +79,26 @@ func (e *Engine) loadDataFile(id uint32) error {
 
 // replayFile scans f starting at from, validating and applying every
 // complete entry to the index, and returns the offset of the first
-// byte not covered by a complete valid entry. That offset equals the
-// file size when the tail is clean.
-func (e *Engine) replayFile(f *os.File, id uint32, from int64) (int64, error) {
+// byte not covered by a complete valid entry plus the number of
+// complete entries it applied. That offset equals the file size when
+// the tail is clean.
+func (e *Engine) replayFile(f *os.File, id uint32, from int64) (int64, int, error) {
 	info, err := f.Stat()
 	if err != nil {
-		return 0, fmt.Errorf("engine: stat data file: %w", err)
+		return 0, 0, fmt.Errorf("engine: stat data file: %w", err)
 	}
 	size := info.Size()
 
 	off := from
+	scanned := 0
 	header := make([]byte, entryHeaderSize)
 	for off < size {
 		remaining := size - off
 		if remaining < entryHeaderSize {
-			return off, nil // torn header
+			return off, scanned, nil // torn header
 		}
 		if _, err := f.ReadAt(header, off); err != nil {
-			return 0, fmt.Errorf("engine: read header at offset %d: %w", off, err)
+			return 0, 0, fmt.Errorf("engine: read header at offset %d: %w", off, err)
 		}
 		h := decodeHeader(header)
 		total := int64(entryHeaderSize) + int64(h.keyLen)
@@ -104,15 +106,15 @@ func (e *Engine) replayFile(f *os.File, id uint32, from int64) (int64, error) {
 			total += int64(h.valueLen)
 		}
 		if total > remaining {
-			return off, nil // impossible lengths or torn body
+			return off, scanned, nil // impossible lengths or torn body
 		}
 
 		entry := make([]byte, total)
 		if _, err := f.ReadAt(entry, off); err != nil {
-			return 0, fmt.Errorf("engine: read entry at offset %d: %w", off, err)
+			return 0, 0, fmt.Errorf("engine: read entry at offset %d: %w", off, err)
 		}
 		if entryCRC(entry) != h.crc {
-			return off, nil // corrupted entry (e.g. partial write)
+			return off, scanned, nil // corrupted entry (e.g. partial write)
 		}
 
 		key := string(entry[entryHeaderSize : entryHeaderSize+int(h.keyLen)])
@@ -122,8 +124,9 @@ func (e *Engine) replayFile(f *os.File, id uint32, from int64) (int64, error) {
 			e.index[key] = entryRef{fileID: id, offset: off, size: uint32(total)}
 		}
 		off += total
+		scanned++
 	}
-	return off, nil
+	return off, scanned, nil
 }
 
 // createActive creates a brand-new data file for appends, syncs the
@@ -136,7 +139,7 @@ func (e *Engine) createActive(id uint32) error {
 	if err != nil {
 		return err
 	}
-	e.files[id] = f
+	e.files[id] = &dataFile{f: f}
 	return nil
 }
 

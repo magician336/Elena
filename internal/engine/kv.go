@@ -106,6 +106,7 @@ func (e *Engine) putExpires(key, value []byte, expires int64) error {
 
 	e.mu.Lock()
 	e.index[string(key)] = entryRef{fileID: e.activeID, offset: offset, size: uint32(len(buf))}
+	e.files[e.activeID].entries++
 	e.activeOffset += int64(len(buf))
 	e.mu.Unlock()
 	return e.rotateIfDue()
@@ -157,6 +158,7 @@ func (e *Engine) Delete(key []byte) error {
 
 	e.mu.Lock()
 	delete(e.index, string(key))
+	e.files[e.activeID].entries++
 	e.activeOffset += int64(len(buf))
 	e.mu.Unlock()
 	return e.rotateIfDue()
@@ -166,7 +168,7 @@ func (e *Engine) Delete(key []byte) error {
 // returning, so the bytes are on disk by the time the caller's Put is
 // acknowledged. The caller must hold writeMu.
 func (e *Engine) appendDurable(buf []byte) error {
-	active := e.files[e.activeID]
+	active := e.files[e.activeID].f
 	n, err := active.Write(buf)
 	if err != nil {
 		return fmt.Errorf("engine: append to data file: %w", err)
@@ -188,9 +190,9 @@ func (e *Engine) appendDurable(buf []byte) error {
 // The caller must hold mu (read or write) so the index entry stays
 // valid and the active file is not mutated mid-read.
 func (e *Engine) readEntry(ref entryRef, key []byte) ([]byte, error) {
-	f, ok := e.files[ref.fileID]
+	df, ok := e.files[ref.fileID]
 	if !ok {
 		return nil, fmt.Errorf("engine: data file %d for key %q: %w", ref.fileID, key, ErrCorrupted)
 	}
-	return readLiveEntry(f, ref, string(key))
+	return readLiveEntry(df.f, ref, string(key))
 }

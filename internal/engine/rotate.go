@@ -38,7 +38,7 @@ func (e *Engine) rotateActive() error {
 		return err
 	}
 	e.mu.Lock()
-	e.files[next] = f
+	e.files[next] = &dataFile{f: f}
 	e.activeID = next
 	e.activeOffset = 0
 	e.mu.Unlock()

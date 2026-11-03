@@ -75,10 +75,11 @@ func hintRecordCRC(header, key []byte) uint32 {
 // The caller must hold writeMu (the data file's contents must be final
 // before this runs: rotation or Close).
 func (e *Engine) writeHintFile(id uint32) error {
-	data := e.files[id]
-	if data == nil {
+	df := e.files[id]
+	if df == nil {
 		return fmt.Errorf("engine: data file %d not open for hint write", id)
 	}
+	data := df.f
 	info, err := data.Stat()
 	if err != nil {
 		return fmt.Errorf("engine: stat data file %d for hint write: %w", id, err)
@@ -188,45 +189,45 @@ type hintRecord struct {
 // loadFromHint reads the hint file for data file id and, when every
 // record validates, applies the records to the index in order and
 // returns the data-file offset the hint covers (the end of its last
-// record's entry). The caller must then scan the data file from that
-// offset onward — normally nothing, but a hint written at an earlier
-// Close leaves the bytes appended after it to the scan, and a torn
-// tail there is truncated as usual.
+// record's entry) plus the number of records applied. The caller must
+// then scan the data file from that offset onward — normally nothing,
+// but a hint written at an earlier Close leaves the bytes appended
+// after it to the scan, and a torn tail there is truncated as usual.
 //
 // ok is false whenever the hint cannot be trusted: missing, empty,
 // structurally invalid, checksum-failing, or pointing outside the data
 // file. A hint never raises an error — it is an accelerator, not a
 // correctness dependency, so every failure mode falls back to scanning
 // the data file from offset 0.
-func (e *Engine) loadFromHint(id uint32, dataSize int64) (covered int64, ok bool) {
+func (e *Engine) loadFromHint(id uint32, dataSize int64) (covered int64, records int, ok bool) {
 	f, err := os.Open(filepath.Join(e.dir, hintFileName(id)))
 	if err != nil {
-		return 0, false
+		return 0, 0, false
 	}
 	defer func() { _ = f.Close() }()
 
 	info, err := f.Stat()
 	if err != nil || info.Size() == 0 {
-		return 0, false
+		return 0, 0, false
 	}
 
-	records, valid := parseHintRecords(f, info.Size(), e.maxKeySize, dataSize)
+	recs, valid := parseHintRecords(f, info.Size(), e.maxKeySize, dataSize)
 	if !valid {
-		return 0, false
+		return 0, 0, false
 	}
 
-	for _, r := range records {
+	for _, r := range recs {
 		if r.tombstone {
 			delete(e.index, r.key)
 		} else {
 			e.index[r.key] = entryRef{fileID: id, offset: r.offset, size: r.size}
 		}
 	}
-	if n := len(records); n > 0 {
-		last := records[n-1]
+	if n := len(recs); n > 0 {
+		last := recs[n-1]
 		covered = last.offset + int64(last.size)
 	}
-	return covered, true
+	return covered, len(recs), true
 }
 
 // parseHintRecords decodes and validates every record of a hint file.

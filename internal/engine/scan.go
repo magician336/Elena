@@ -28,11 +28,11 @@ type ScanOptions struct {
 }
 
 // scanItem is one entry of a scan's snapshot: the key, its location,
-// and the already-open data file to read it from.
+// and the open data file to read it from.
 type scanItem struct {
 	key string
 	ref entryRef
-	f   *os.File
+	f   *dataFile
 }
 
 // Scan visits every live entry matching opts, in byte-lexicographic
@@ -61,7 +61,7 @@ func (e *Engine) Scan(opts ScanOptions, visit func(key, value []byte) error) err
 	}
 
 	for _, it := range items {
-		value, err := readLiveEntry(it.f, it.ref, it.key)
+		value, err := readLiveEntry(it.f.f, it.ref, it.key)
 		if err != nil {
 			if errors.Is(err, ErrNotFound) {
 				continue // entry expired between snapshot and read

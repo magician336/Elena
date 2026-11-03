@@ -1,6 +1,7 @@
 package engine_test
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -120,5 +121,107 @@ func mustPutWithTTL(t *testing.T, eng *engine.Engine, key, value string, ttl tim
 	t.Helper()
 	if err := eng.PutWithTTL([]byte(key), []byte(value), ttl); err != nil {
 		t.Fatalf("PutWithTTL(%q) failed: %v", key, err)
+	}
+}
+
+// After churn (overwrites and deletes), Stats must account the dead
+// entries: the overwritten old value, the deleted key's value, and its
+// tombstone are all dead — no reader can reach them again. The byte
+// view must agree with the file view: DataBytes is the sum of the data
+// file sizes, DeadBytes is what a merge can reclaim, and DeadRatio is
+// the dead share of the bytes on disk.
+func TestStatsDeadAccountingAfterChurn(t *testing.T) {
+	dir := t.TempDir()
+	eng := openEngineWithOptions(t, dir, engine.Options{})
+	defer closeEngine(t, eng)
+
+	mustPut(t, eng, "k1", "value-1")
+	mustPut(t, eng, "k2", "value-2")
+	mustPut(t, eng, "k3", "value-3")
+	if s := eng.Stats(); s.DeadEntries != 0 || s.DeadRatio != 0 {
+		t.Fatalf("before churn: DeadEntries = %d, DeadRatio = %v, want 0/0", s.DeadEntries, s.DeadRatio)
+	}
+	mustPut(t, eng, "k1", "value-1-longer")          // overwrite: old value dies
+	if err := eng.Delete([]byte("k2")); err != nil { // delete: value dies, tombstone born dead
+		t.Fatalf("Delete(k2) failed: %v", err)
+	}
+
+	s := eng.Stats()
+	if s.LiveEntries != 2 {
+		t.Errorf("LiveEntries = %d, want 2 (k1, k3)", s.LiveEntries)
+	}
+	if want := uint64(3); s.DeadEntries != want {
+		t.Errorf("DeadEntries = %d, want %d (overwritten value, deleted value, tombstone)", s.DeadEntries, want)
+	}
+	if len(s.Files) != 1 {
+		t.Fatalf("Files has %d entries, want 1 (no rotation happened)", len(s.Files))
+	}
+	if want := uint64(5); s.Files[0].Entries != want {
+		t.Errorf("Files[0].Entries = %d, want %d (3 puts + 1 overwrite + 1 tombstone)", s.Files[0].Entries, want)
+	}
+	if s.LiveBytes == 0 || s.LiveBytes >= s.DataBytes {
+		t.Errorf("LiveBytes = %d, DataBytes = %d, want 0 < LiveBytes < DataBytes", s.LiveBytes, s.DataBytes)
+	}
+	if want := s.DataBytes - s.LiveBytes; s.DeadBytes != want {
+		t.Errorf("DeadBytes = %d, want DataBytes-LiveBytes = %d", s.DeadBytes, want)
+	}
+	if want := float64(s.DeadBytes) / float64(s.DataBytes); s.DeadRatio != want {
+		t.Errorf("DeadRatio = %v, want DeadBytes/DataBytes = %v", s.DeadRatio, want)
+	}
+	if s.DeadRatio <= 0 {
+		t.Errorf("DeadRatio = %v, want > 0 after churn", s.DeadRatio)
+	}
+}
+
+// The index lives entirely in memory, so Stats must publish a memory
+// estimate that grows with the number of keys. It is an estimate — the
+// assertion pins only that it is positive and monotone in the key set.
+func TestStatsIndexMemoryEstimateGrowsWithKeys(t *testing.T) {
+	dir := t.TempDir()
+	eng := openEngineWithOptions(t, dir, engine.Options{})
+	defer closeEngine(t, eng)
+
+	mustPut(t, eng, "a", "v")
+	small := eng.Stats().IndexMemoryBytes
+	if small == 0 {
+		t.Fatal("IndexMemoryBytes = 0 with one live key, want a positive estimate")
+	}
+	for i := 0; i < 100; i++ {
+		mustPut(t, eng, fmt.Sprintf("key-%02d", i), "v")
+	}
+	large := eng.Stats().IndexMemoryBytes
+	if large <= small {
+		t.Errorf("IndexMemoryBytes after 101 keys = %d, want > %d after 1 key", large, small)
+	}
+}
+
+// Dead accounting must survive Close/Open: replay rebuilds the same
+// live set, and the overwritten/deleted entries stay dead on disk, so
+// a reopened engine reports the same dead-entry and byte observables.
+func TestStatsDeadAccountingSurvivesReopen(t *testing.T) {
+	dir := t.TempDir()
+	eng := openEngineWithOptions(t, dir, engine.Options{})
+
+	mustPut(t, eng, "k1", "value-1")
+	mustPut(t, eng, "k2", "value-2")
+	mustPut(t, eng, "k1", "value-1-overwritten")
+	if err := eng.Delete([]byte("k2")); err != nil {
+		t.Fatalf("Delete(k2) failed: %v", err)
+	}
+	before := eng.Stats()
+	if err := eng.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	reopened := openEngineWithOptions(t, dir, engine.Options{})
+	defer closeEngine(t, reopened)
+	after := reopened.Stats()
+	if after.LiveEntries != before.LiveEntries || after.DeadEntries != before.DeadEntries {
+		t.Errorf("entries after reopen: live %d (was %d), dead %d (was %d)",
+			after.LiveEntries, before.LiveEntries, after.DeadEntries, before.DeadEntries)
+	}
+	if after.LiveBytes != before.LiveBytes || after.DataBytes != before.DataBytes {
+		t.Errorf("bytes after reopen: live %d (was %d), data %d (was %d)",
+			after.LiveBytes, before.LiveBytes, after.DataBytes, before.DataBytes)
 	}
 }

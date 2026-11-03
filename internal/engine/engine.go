@@ -76,6 +76,16 @@ type Options struct {
 	MaxDataFileSize int
 }
 
+// dataFile couples an open data file with the per-file accounting
+// Stats publishes. The entries count covers every encoded entry the
+// file holds, live and dead; it is guarded by Engine.mu (appends count
+// under mu in the write path, replay counts at Open).
+type dataFile struct {
+	f *os.File
+
+	entries uint64
+}
+
 // Engine is an embedded key-value storage engine rooted at a directory.
 //
 // Concurrency model: single writer, many readers. writeMu serializes
@@ -86,8 +96,8 @@ type Engine struct {
 	dir      string
 	lockFile *os.File
 
-	files    map[uint32]*os.File // open data files, keyed by file ID
-	activeID uint32              // file that receives appends; fixed after Open
+	files    map[uint32]*dataFile // open data files, keyed by file ID
+	activeID uint32               // file that receives appends; fixed after Open
 
 	activeOffset int64 // end of the active file; written only under writeMu
 
@@ -139,7 +149,7 @@ func Open(dir string, opts Options) (*Engine, error) {
 	eng := &Engine{
 		dir:             dir,
 		lockFile:        lockFile,
-		files:           make(map[uint32]*os.File),
+		files:           make(map[uint32]*dataFile),
 		maxKeySize:      opts.MaxKeySize,
 		maxValueSize:    opts.MaxValueSize,
 		maxDataFileSize: opts.MaxDataFileSize,
@@ -248,8 +258,8 @@ func (e *Engine) Close() error {
 		firstErr = err
 	}
 
-	for id, f := range e.files {
-		if err := f.Close(); err != nil && firstErr == nil {
+	for id, df := range e.files {
+		if err := df.f.Close(); err != nil && firstErr == nil {
 			firstErr = fmt.Errorf("engine: close data file %d: %w", id, err)
 		}
 		delete(e.files, id)
