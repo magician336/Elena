@@ -10,11 +10,21 @@ import (
 )
 
 // ScanOptions bounds what Scan visits. The zero value scans every live
-// key.
+// key in byte-lexicographic order.
 type ScanOptions struct {
 	// Prefix restricts the scan to keys that start with these bytes.
 	// nil or empty matches every key.
 	Prefix []byte
+
+	// End is an upper bound on the visited keys themselves (not
+	// relative to Prefix). nil or empty means no upper bound;
+	// otherwise a key is visited when it is less than End, or equal to
+	// End and EndInclusive is set.
+	End []byte
+
+	// EndInclusive decides whether a key exactly equal to End is
+	// visited (true) or excluded (false).
+	EndInclusive bool
 }
 
 // scanItem is one entry of a scan's snapshot: the key, its location,
@@ -79,10 +89,16 @@ func (e *Engine) snapshotItems(opts ScanOptions) ([]scanItem, error) {
 		return nil, ErrClosed
 	}
 	prefix := string(opts.Prefix)
+	end := string(opts.End)
 	items := make([]scanItem, 0, len(e.index))
 	for key, ref := range e.index {
 		if !strings.HasPrefix(key, prefix) {
 			continue
+		}
+		if end != "" {
+			if cmp := strings.Compare(key, end); cmp > 0 || (cmp == 0 && !opts.EndInclusive) {
+				continue
+			}
 		}
 		f, ok := e.files[ref.fileID]
 		if !ok {
