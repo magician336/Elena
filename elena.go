@@ -118,11 +118,34 @@ func (sess *Session) Events() ([]Event, error) {
 	if err != nil {
 		return nil, err
 	}
+	return outerEvents(inner), nil
+}
+
+// EventsUpTo performs a point-in-time read: it returns every event of
+// the trajectory whose sequence number is at most seq, in sequence
+// order, with the endpoint event itself included. A seq below the
+// trajectory's first sequence number — zero — reads empty; a seq beyond
+// the stored tail reads the whole trajectory. The read is a snapshot
+// like the full one: it returns the events visible when it starts, so
+// appends that race with it are not included even when their sequence
+// numbers fall under seq. A session whose TTL has elapsed reads as if
+// never written, so its point-in-time read is empty too.
+func (sess *Session) EventsUpTo(seq uint64) ([]Event, error) {
+	inner, err := sess.session.EventsUpTo(seq)
+	if err != nil {
+		return nil, err
+	}
+	return outerEvents(inner), nil
+}
+
+// outerEvents copies the semantic layer's events into the public Event,
+// so the two types stay decoupled.
+func outerEvents(inner []semantic.Event) []Event {
 	events := make([]Event, len(inner))
 	for i, ev := range inner {
 		events[i] = Event{Seq: ev.Seq, AppendedAt: ev.AppendedAt, Payload: ev.Payload}
 	}
-	return events, nil
+	return events
 }
 
 // Event returns the single event with the given sequence number, or an

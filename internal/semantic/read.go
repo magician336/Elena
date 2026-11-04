@@ -31,7 +31,18 @@ type Event struct {
 // Events returns the whole trajectory in sequence order. The read is a
 // snapshot: events appended after it starts are not included.
 func (sess *Session) Events() ([]Event, error) {
-	return scanEvents(sess.store.eng, sess.key)
+	return scanEvents(sess.store.eng, sess.key, nil)
+}
+
+// EventsUpTo returns every event of the trajectory with a sequence
+// number of at most seq, in sequence order — the endpoint event included.
+// A seq below the trajectory's first sequence number reads empty; a seq
+// beyond the stored tail reads the whole trajectory. The read is a
+// snapshot like the full one: it returns the events visible when it
+// starts, so appends that race with it are not included even when their
+// sequence numbers fall under seq.
+func (sess *Session) EventsUpTo(seq uint64) ([]Event, error) {
+	return scanEvents(sess.store.eng, sess.key, eventKey(sess.key.namespace, sess.key.session, seq))
 }
 
 // Event returns the single event with the given sequence number, or an
@@ -54,13 +65,17 @@ func (sess *Session) Event(seq uint64) (Event, error) {
 	return Event{Seq: env.sequence, AppendedAt: env.appendedAt, Payload: env.payload}, nil
 }
 
-// scanEvents walks the trajectory's event keys in key order — which is
-// sequence order by construction — and decodes each stored envelope,
-// validating that key and envelope agree on the sequence number.
-func scanEvents(eng *engine.Engine, key trajKey) ([]Event, error) {
+// scanEvents is the one read path of a trajectory, shared by the full
+// read and the point-in-time read: it walks the trajectory's event keys
+// in key order — which is sequence order by construction — and decodes
+// each stored envelope, validating that key and envelope agree on the
+// sequence number. end is the sole difference between the two reads:
+// the inclusive absolute upper bound on the visited keys, given as the
+// endpoint event's own encoded key — or nil for no bound, the full read.
+func scanEvents(eng *engine.Engine, key trajKey, end []byte) ([]Event, error) {
 	prefix := eventPrefix(key.namespace, key.session)
 	var events []Event
-	err := eng.Scan(engine.ScanOptions{Prefix: prefix}, func(k, value []byte) error {
+	err := eng.Scan(engine.ScanOptions{Prefix: prefix, End: end, EndInclusive: true}, func(k, value []byte) error {
 		seq, ok := sequenceFromEventKey(prefix, k)
 		if !ok {
 			return fmt.Errorf("elena: read trajectory of %q: %w", key.display(), errCorruptedEvent)
