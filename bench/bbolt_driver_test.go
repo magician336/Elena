@@ -43,7 +43,7 @@ func TestBboltDriverAppendReadRoundtrip(t *testing.T) {
 	if err := drv.Open(t.TempDir()); err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer drv.Close()
+	defer func() { _ = drv.Close() }()
 
 	value := []byte("payload-bytes")
 	for _, key := range []uint64{0, 1} {
@@ -68,7 +68,7 @@ func TestBboltDriverReadBeforeAppendFails(t *testing.T) {
 	if err := drv.Open(t.TempDir()); err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer drv.Close()
+	defer func() { _ = drv.Close() }()
 
 	if err := drv.Do(Op{Kind: OpRead, Key: 42}); err == nil {
 		t.Fatal("read of a never-appended key succeeded, want failure")
@@ -106,7 +106,7 @@ func TestBboltDriverOpenLockedDirectory(t *testing.T) {
 	if err := holder.Open(dir); err != nil {
 		t.Fatalf("first Open: %v", err)
 	}
-	defer holder.Close()
+	defer func() { _ = holder.Close() }()
 
 	second := &bboltDriver{lockTimeout: time.Millisecond} // fail fast instead of waiting out the default
 	if err := second.Open(dir); err == nil {

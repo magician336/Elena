@@ -60,13 +60,11 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	err = run(cfg, stdout)
-	switch {
-	case err == nil:
+	if err == nil {
 		return 0
-	default:
-		_, _ = fmt.Fprintf(stderr, "bench: %v\n", err)
-		return 1
 	}
+	_, _ = fmt.Fprintf(stderr, "bench: %v\n", err)
+	return 1
 }
 
 // config is one parsed command line.
