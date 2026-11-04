@@ -164,8 +164,18 @@ func (s *Store) createSession(namespace, session string, form lifecycleForm) (*S
 
 // validateLabels rejects empty or oversized namespace and session IDs.
 func validateLabels(key trajKey) error {
-	if len(key.namespace) == 0 || len(key.namespace) > maxLabelBytes ||
-		len(key.session) == 0 || len(key.session) > maxLabelBytes {
+	if err := validateNamespace(key.namespace); err != nil {
+		return err
+	}
+	if len(key.session) == 0 || len(key.session) > maxLabelBytes {
+		return ErrInvalidLabel
+	}
+	return nil
+}
+
+// validateNamespace rejects an empty or oversized namespace.
+func validateNamespace(namespace string) error {
+	if len(namespace) == 0 || len(namespace) > maxLabelBytes {
 		return ErrInvalidLabel
 	}
 	return nil
