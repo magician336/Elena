@@ -85,7 +85,11 @@ bench-cov:
 	cd bench && $(GO) tool cover -func=coverage.out | tail -n 1
 
 # bench-smoke drives each engine through a seconds-scale micro workload
-# end to end via the harness CLI.
+# end to end via the harness CLI, then every engine through one
+# smoke-scale matrix cell each.
 bench-smoke:
 	cd bench && $(GO) run ./cmd/bench --driver elena --ops 50 --value-size 256 --dir "$$(mktemp -d)/elena"
 	cd bench && $(GO) run ./cmd/bench --driver bbolt --ops 50 --value-size 256 --dir "$$(mktemp -d)/bbolt"
+	cd bench && $(GO) run ./cmd/bench --driver badger --ops 50 --value-size 256 --dir "$$(mktemp -d)/badger"
+	cd bench && $(GO) run ./cmd/bench --driver rosedb --ops 50 --value-size 256 --dir "$$(mktemp -d)/rosedb"
+	cd bench && $(GO) run ./cmd/matrix --engines elena,bbolt,badger,rosedb --mixes a --values 64 --keys 8 --run-ops 8 --sync-period 5ms --root "$$(mktemp -d)/matrix"

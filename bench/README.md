@@ -17,15 +17,21 @@ elena number is taken off the public surface an embedded host uses.
 
 | File | Role |
 | --- | --- |
-| `driver.go` | the `Driver` lifecycle and the name registry (`bench.For`) |
+| `driver.go` | the `Driver` lifecycle, the sync tiers, and the name registry (`bench.For`, `bench.ForTier`) |
 | `workload.go` | the operation language and the micro workload builder |
 | `generator.go` | the seeded mixed-workload generator: declared read/write ratio, uniform or Zipf key distribution |
+| `ycsb.go` | the YCSB A/B/C mixes and their two-phase load/run workloads |
 | `metrics.go` | per-operation latency collection, the throughput math, and nearest-rank quantiles (P50/P99/P999) |
 | `harness.go` | phase orchestration and per-phase result collection |
+| `matrix.go` | the comparison matrix: plan, per-engine durability declarations, and the run |
 | `report.go` | deterministic rendering of results: markdown report plus raw JSON |
+| `matrix_report.go` | deterministic rendering of the matrix: declarations beside the numbers |
 | `elena_driver.go` | elena through the public library API |
 | `bbolt_driver.go` | bbolt through its official Go package |
+| `badger_driver.go` | badger through its official Go package |
+| `rosedb_driver.go` | rosedb through its official Go package |
 | `cmd/bench` | the CLI: one engine, one micro workload, printed numbers |
+| `cmd/matrix` | the CLI: the YCSB comparison matrix, one command, any subset |
 
 ## Measurement path
 
@@ -81,12 +87,70 @@ Neither form prints a mean.
 
 ### Durability alignment
 
-Both drivers ride the same regime: an append is complete only once it
-is synchronized — elena's default write-synchronized appends, bbolt
-committing one write transaction per append under its default
-sync-on-commit. Reads never sync in either driver. One durability
-level for every driver is the precondition for any cross-engine
-number this harness prints.
+Two tiers exist. The per-write tier aligns every engine at its
+every-write-synchronized configuration; the group-commit tier aligns at
+periodic synchronization, one flusher sync per period. Cross-engine
+numbers are only produced inside one tier — a tier an engine cannot
+configure is declared and produces no numbers for that engine, never a
+mismatched comparison. Every report prints the standing engine by
+engine:
+
+- elena, per-write: every append fdatasync'ed before it acknowledges
+  (`WithSyncAlways`, the store default); group-commit: appends
+  acknowledge after the write, a background flusher fdatasyncs once
+  per the declared period (`WithSyncInterval`) — the only engine of the
+  four that exposes a periodic-sync configuration.
+- bbolt: one write transaction per append under its default
+  sync-on-commit (`NoSync` left false); no periodic-sync configuration
+  exists, so the group-commit tier produces no bbolt numbers.
+- badger: `SyncWrites` set to true — badger msyncs the write-ahead
+  value log after every write, the tier its option documentation scopes
+  as surviving hard reboots (the v4 default is false; set explicitly);
+  no periodic-sync configuration, so the group-commit tier produces no
+  badger numbers.
+- rosedb: every append runs as one batch with `Sync=true`, whose commit
+  fsyncs the write-ahead log before it acknowledges. Per the v2 source,
+  this is the only per-write synchronized path that exists: the
+  DB-level `Sync` flag governs a write-ahead path the batch operations
+  never ride, `db.Put` runs its internal batch with sync off, and a
+  DB-level `Sync=true` would disable the batch-level sync — so the
+  driver keeps the DB-level flag false and rides the batch tier. The
+  `BytesPerSync` option flushes by accumulated bytes, not by a time
+  period, which is not the group-commit tier; it produces no rosedb
+  numbers either.
+
+Reads never sync in any driver.
+
+## The comparison matrix
+
+`bench.RunMatrix` runs the declared full comparison — every engine,
+the three YCSB mixes (A 50/50 read/update, B 95/5, C read-only), the
+five value-size steps 64B/256B/1KB/4KB/16KB — or any subset of engines,
+mixes, and sizes, at the tiers each engine supports. Each workload is
+the YCSB two-phase shape: a load phase appending exactly one value per
+key in key order, then a run phase carrying the mix's declared ratio
+over the same keys. One workload per mix and value size is generated
+once per run and driven identically by every engine and tier — the
+same seed selects the same operation sequence for everyone, so driver
+differences never leak into workload semantics. Keys draw from YCSB's
+zipfian (theta 0.99) by default, uniform on request.
+
+Elena-side mapping, declared with the numbers: one key is one
+trajectory (namespace "bench", session "traj-\<key\>"); an update
+appends the trajectory's next event; a read is the single-event read of
+the latest acknowledged event. The elena data set grows monotonically —
+an update is a new event, never an in-place overwrite — while the KV
+engines overwrite in place. That difference is elena's append-only
+semantics, declared rather than hidden: the comparison's common
+language is the workload mix, and the mapping statement travels with
+every number.
+
+The matrix renders two report forms, both deterministic functions of
+the result: a markdown report and a raw JSON document whose phase
+fields are the single-run raw document's — one phase shape across
+every raw file this module emits. The declarations (workload
+semantics, elena mapping, per-engine durability standings) are part of
+both documents, ahead of and beside the numbers.
 
 ## Usage
 
@@ -100,10 +164,26 @@ Each run prints one line per phase — operation count, wall time,
 throughput in ops/sec, latency min/max/mean. The directory must not
 exist; a rerun over leftovers is not a micro workload.
 
+The full comparison matrix, one command — every engine, every mix,
+every value size, at the aligned tiers (subsets by flag):
+
+```
+go run ./cmd/matrix --root <fresh-root> \
+  --keys 1000000 --run-ops 2000000 --seed 1 \
+  --json-out matrix.json --md-out matrix.md
+go run ./cmd/matrix --root <fresh-root> --engines elena,bbolt --mixes a --values 1024
+```
+
+Each run prints one line per produced cell — throughput and P99 per
+phase — then a summary; the JSON and markdown reports carry the
+declarations with the numbers. The root must not exist, and each cell
+runs in its own fresh directory under it.
+
 Gates (same commands locally as in CI, see the Makefile's `bench-*`
 targets): the module's tests run with the race detector behind an 80%
 coverage gate, and a seconds-scale smoke run drives every driver end
-to end on every push.
+to end on every push — the matrix's own end-to-end test is that smoke
+run in test form, every engine on a handful of operations.
 
 ## Methodology anchor
 
