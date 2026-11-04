@@ -53,6 +53,60 @@ func TestCreateSessionWithTTLRejectsInvalidTTLLeavesNoSession(t *testing.T) {
 	}
 }
 
+// The deadline of a timed session is decided by what the store holds on
+// disk, not by the process that attached to it: reopening a directory
+// and attaching to the session again — with any TTL argument — must
+// continue the stored session under its original deadline, and once
+// that deadline passes the session must read as gone across the
+// Close/Open boundary too.
+func TestTimedSessionDeadlineSurvivesReopen(t *testing.T) {
+	dir := t.TempDir()
+	const ttl = time.Second
+
+	st, err := elena.Open(dir)
+	if err != nil {
+		t.Fatalf("first Open(%q) failed: %v", dir, err)
+	}
+	first := createTimedSession(t, st, "runs", "alpha", ttl)
+	for i := 0; i < 2; i++ {
+		mustAppend(t, first, "event")
+	}
+	if err := st.Close(); err != nil {
+		t.Fatalf("Close() failed: %v", err)
+	}
+
+	reopened, err := elena.Open(dir)
+	if err != nil {
+		t.Fatalf("second Open(%q) failed: %v", dir, err)
+	}
+	defer closeStore(t, reopened)
+
+	// Attach with a much larger TTL: the stored session, not this call,
+	// must govern — the two stored events read back before the deadline.
+	second := createTimedSession(t, reopened, "runs", "alpha", 30*time.Second)
+	events, err := second.Events()
+	if err != nil {
+		t.Fatalf("Events() before the deadline failed: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("Events() before the deadline returned %d events, want 2", len(events))
+	}
+
+	// Past the original deadline — though far short of the 30s this
+	// attach call asked for — the session must be gone.
+	waitForTTLElapse(ttl - 300*time.Millisecond)
+	events, err = second.Events()
+	if err != nil {
+		t.Fatalf("Events() after the deadline failed: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("Events() after the deadline returned %d events, want 0", len(events))
+	}
+	if _, err := second.Event(1); !errors.Is(err, elena.ErrEventNotFound) {
+		t.Errorf("Event(1) after the deadline err = %v, want ErrEventNotFound", err)
+	}
+}
+
 // A session created with a TTL shares one deadline between its metadata
 // and every event of its trajectory: before the deadline the trajectory
 // reads in full; after it, the whole session — events included — reads

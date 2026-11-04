@@ -58,6 +58,26 @@ func encodeTimedMetadata(deadline time.Time) []byte {
 	return value
 }
 
+// decodeMetadata validates a stored metadata entry and returns the
+// lifecycle form it records: perpetual, or timed with its deadline. A
+// timed entry the engine still reports is one whose deadline has not
+// elapsed, so the decoded deadline is always in the future.
+func decodeMetadata(value []byte) (lifecycleForm, time.Time, error) {
+	switch {
+	case len(value) == 2 && value[0] == metadataVersion && value[1] == metadataFormPerpetual:
+		return lifecycleForm{}, time.Time{}, nil
+	case len(value) == metadataTimedSize && value[0] == metadataVersion && value[1] == metadataFormTimed:
+		deadline := time.Unix(0, int64(binary.BigEndian.Uint64(value[2:])))
+		if deadline.IsZero() {
+			// The zero deadline belongs to the perpetual form alone.
+			return lifecycleForm{}, time.Time{}, errMalformedMetadata
+		}
+		return lifecycleForm{timed: true}, deadline, nil
+	default:
+		return lifecycleForm{}, time.Time{}, errMalformedMetadata
+	}
+}
+
 // trajKey identifies one trajectory: the namespace and session ID the
 // caller named at creation time.
 type trajKey struct {
@@ -154,16 +174,20 @@ func validateLabels(key trajKey) error {
 // attachTrajectory brings a trajectory into this store's runtime: it
 // ensures the session's metadata entry exists on disk under the
 // requested lifecycle form and rebuilds the sequence counter from the
-// stored trajectory. The caller holds s.mu.
+// stored trajectory. A session found on disk attaches as stored — a
+// timed session under its recorded deadline, whatever TTL the attaching
+// call named. The caller holds s.mu.
 func (s *Store) attachTrajectory(key trajKey, form lifecycleForm) (*trajectory, error) {
 	meta := metadataKey(key.namespace, key.session)
 	var deadline time.Time
 	value, err := s.eng.Get(meta)
 	switch {
 	case err == nil:
-		if len(value) != 2 || value[0] != metadataVersion || value[1] != metadataFormPerpetual {
-			return nil, fmt.Errorf("elena: attach session %q: %w", key.display(), errMalformedMetadata)
+		_, storedDeadline, derr := decodeMetadata(value)
+		if derr != nil {
+			return nil, fmt.Errorf("elena: attach session %q: %w", key.display(), derr)
 		}
+		deadline = storedDeadline
 	case errors.Is(err, engine.ErrNotFound):
 		metaValue := encodePerpetualMetadata()
 		if form.timed {
