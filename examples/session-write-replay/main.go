@@ -1,7 +1,7 @@
 // Session writes and replay — one perpetual session in one namespace,
 // four appended events, the full trajectory read, and a point-in-time
 // read back to a known consistent sequence number. Sessions of this
-// shape suit agent conversation records, one appended event per
+// shape suit agent trajectory streams, one appended event per
 // exchange.
 //
 // Session demo, run with:
