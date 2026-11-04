@@ -22,10 +22,13 @@ func runMerge(args []string, stdout io.Writer) error {
 			return err
 		}
 		after := store.Stats()
-		fmt.Fprintf(stdout, "merge stats before: %s\n", statsLine(before))
-		fmt.Fprintf(stdout, "merge stats after:  %s\n", statsLine(after))
-		fmt.Fprintf(stdout, "merge reclaimed %d dead bytes\n", int64(before.DeadBytes)-int64(after.DeadBytes))
-		return nil
+		if err := writef(stdout, "merge stats before: %s\n", statsLine(before)); err != nil {
+			return err
+		}
+		if err := writef(stdout, "merge stats after:  %s\n", statsLine(after)); err != nil {
+			return err
+		}
+		return writef(stdout, "merge reclaimed %d dead bytes\n", int64(before.DeadBytes)-int64(after.DeadBytes))
 	})
 }
 

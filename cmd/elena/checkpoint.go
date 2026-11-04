@@ -36,9 +36,8 @@ func runCheckpoint(args []string, stdout io.Writer) error {
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(stdout, "checkpoint %d created at %s, baseline of %d live sessions\n",
+		return writef(stdout, "checkpoint %d created at %s, baseline of %d live sessions\n",
 			id, createdAt.Format(time.RFC3339Nano), live)
-		return nil
 	})
 }
 
@@ -50,9 +49,13 @@ func listCheckpoints(dir string, stdout io.Writer) error {
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(stdout, "checkpoints stored: %d\n", len(checkpoints))
+		if err := writef(stdout, "checkpoints stored: %d\n", len(checkpoints)); err != nil {
+			return err
+		}
 		for _, info := range checkpoints {
-			fmt.Fprintf(stdout, "  checkpoint %d created %s\n", info.ID, info.CreatedAt.Format(time.RFC3339Nano))
+			if err := writef(stdout, "  checkpoint %d created %s\n", info.ID, info.CreatedAt.Format(time.RFC3339Nano)); err != nil {
+				return err
+			}
 		}
 		return nil
 	})

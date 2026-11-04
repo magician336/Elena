@@ -38,7 +38,7 @@ func TestRunDumpWholeStore(t *testing.T) {
 	i1 := strings.Index(out, "event #1")
 	i2 := strings.Index(out, "event #2")
 	iNote := strings.Index(out, `"note"`)
-	if i1 < 0 || i2 < 0 || iNote < 0 || !(i1 < i2 && i2 < iNote) {
+	if i1 < 0 || i2 < 0 || iNote < 0 || i1 >= i2 || i2 >= iNote {
 		t.Errorf("dump events out of order (i1=%d i2=%d iNote=%d):\n%s", i1, i2, iNote, out)
 	}
 	for _, want := range []string{

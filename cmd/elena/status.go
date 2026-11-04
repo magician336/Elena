@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"io"
 	"time"
 
@@ -35,13 +34,19 @@ func runStatus(args []string, stdout io.Writer) error {
 		}
 
 		stats := store.Stats()
-		fmt.Fprintf(stdout, "store %s: %d namespaces, %d sessions, %d trajectories\n",
-			dir, len(namespaces), totalSessions, totalSessions)
-		fmt.Fprintf(stdout, "merge view: dead ratio %.1f%%, write amplification %.2f, data bytes %d, files %d\n",
-			stats.DeadRatio*100, stats.WriteAmplification, stats.DataBytes, len(stats.Files))
+		if err := writef(stdout, "store %s: %d namespaces, %d sessions, %d trajectories\n",
+			dir, len(namespaces), totalSessions, totalSessions); err != nil {
+			return err
+		}
+		if err := writef(stdout, "merge view: dead ratio %.1f%%, write amplification %.2f, data bytes %d, files %d\n",
+			stats.DeadRatio*100, stats.WriteAmplification, stats.DataBytes, len(stats.Files)); err != nil {
+			return err
+		}
 
 		for i, namespace := range namespaces {
-			fmt.Fprintf(stdout, "namespace %s\n", namespace)
+			if err := writef(stdout, "namespace %s\n", namespace); err != nil {
+				return err
+			}
 			for _, info := range sessionsByNamespace[i] {
 				count, err := eventCount(store, namespace, info)
 				if err != nil {
@@ -51,7 +56,9 @@ func runStatus(args []string, stdout io.Writer) error {
 				if !info.Deadline.IsZero() {
 					lifecycle = "expires " + info.Deadline.Format(time.RFC3339)
 				}
-				fmt.Fprintf(stdout, "  session %s: %s, events %d\n", info.ID, lifecycle, count)
+				if err := writef(stdout, "  session %s: %s, events %d\n", info.ID, lifecycle, count); err != nil {
+					return err
+				}
 			}
 		}
 		return nil

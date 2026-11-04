@@ -35,7 +35,9 @@ func runDump(args []string, stdout io.Writer) error {
 			if len(args) == 3 && !listedSession(sessions, args[2]) {
 				return fmt.Errorf("session %q not stored in namespace %q", args[2], namespace)
 			}
-			fmt.Fprintf(stdout, "namespace %s\n", namespace)
+			if err := writef(stdout, "namespace %s\n", namespace); err != nil {
+				return err
+			}
 			for _, info := range sessions {
 				if len(args) == 3 && info.ID != args[2] {
 					continue
@@ -54,7 +56,9 @@ func runDump(args []string, stdout io.Writer) error {
 // between listing and reading prints no events — it reads as if never
 // written, so there is nothing to export.
 func dumpTrajectory(store *elena.Store, namespace string, info elena.SessionInfo, stdout io.Writer) error {
-	fmt.Fprintf(stdout, "  session %s\n", info.ID)
+	if err := writef(stdout, "  session %s\n", info.ID); err != nil {
+		return err
+	}
 	sess, live, err := sessionHandle(store, namespace, info)
 	if err != nil || !live {
 		return err
@@ -64,7 +68,9 @@ func dumpTrajectory(store *elena.Store, namespace string, info elena.SessionInfo
 		return err
 	}
 	for _, event := range events {
-		fmt.Fprintf(stdout, "    %s\n", eventLine(event))
+		if err := writef(stdout, "    %s\n", eventLine(event)); err != nil {
+			return err
+		}
 	}
 	return nil
 }

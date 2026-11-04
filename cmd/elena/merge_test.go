@@ -19,7 +19,7 @@ func overwriteOneEvent(t *testing.T, dir string) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 	runner, err := store.CreateSession("alpha", "runner")
 	if err != nil {
 		t.Fatalf("create runner: %v", err)

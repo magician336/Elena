@@ -51,7 +51,7 @@ func usagef(format string, a ...any) error {
 // success, 2 on a usage problem, 1 on a store failure.
 func Run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprint(stderr, usageText)
+		_ = printUsage(stderr) // a broken stderr leaves nowhere to report
 		return 2
 	}
 	cmd, rest := args[0], args[1:]
@@ -67,18 +67,28 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	case "restore":
 		return finish("restore", stderr, func() error { return runRestore(rest, stdout) })
 	case "help", "-h", "--help":
-		fmt.Fprint(stdout, usageText)
+		if err := printUsage(stdout); err != nil {
+			return 1
+		}
 		return 0
 	default:
-		fmt.Fprintf(stderr, "command %q not found\n\n", cmd)
-		fmt.Fprint(stderr, usageText)
+		_, _ = fmt.Fprintf(stderr, "command %q not found\n\n", cmd)
+		_ = printUsage(stderr)
 		return 2
 	}
 }
 
+// printUsage writes the usage surface to w.
+func printUsage(w io.Writer) error {
+	_, err := fmt.Fprint(w, usageText)
+	return err
+}
+
 // finish turns one command's outcome into an exit code: usage problems
 // print their message (code 2), store failures print the command and
-// the error (code 1), success stays silent and returns 0.
+// the error (code 1), success stays silent and returns 0. A stderr too
+// broken to carry the message leaves nowhere to report; the code still
+// tells the story.
 func finish(cmd string, stderr io.Writer, fn func() error) int {
 	err := fn()
 	var usage *usageError
@@ -86,10 +96,10 @@ func finish(cmd string, stderr io.Writer, fn func() error) int {
 	case err == nil:
 		return 0
 	case errors.As(err, &usage):
-		fmt.Fprintln(stderr, err)
+		_, _ = fmt.Fprintln(stderr, err)
 		return 2
 	default:
-		fmt.Fprintf(stderr, "%s: %v\n", cmd, err)
+		_, _ = fmt.Fprintf(stderr, "%s: %v\n", cmd, err)
 		return 1
 	}
 }

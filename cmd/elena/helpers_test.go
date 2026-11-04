@@ -28,7 +28,7 @@ func seedInto(t *testing.T, dir string) {
 	if err != nil {
 		t.Fatalf("open seeded store: %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	runner, err := store.CreateSession("alpha", "runner")
 	if err != nil {

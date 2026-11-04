@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"time"
 
 	"elena"
@@ -12,6 +13,13 @@ import (
 // this many, a marker for the rest — the stored payload stays opaque
 // and whole, the dump shows enough to inspect.
 const previewWidth = 64
+
+// writef formats one piece of output onto w, surfacing write failures —
+// a closed pipe down the line — as the command's error.
+func writef(w io.Writer, format string, a ...any) error {
+	_, err := fmt.Fprintf(w, format, a...)
+	return err
+}
 
 // eventLine renders one event for the human-readable exports: sequence
 // number, append timestamp, payload size, and the payload preview.

@@ -36,8 +36,12 @@ func runRestore(args []string, stdout io.Writer) error {
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(stdout, "checkpoint %d (created %s) restored\n", id, createdAt.Format(time.RFC3339Nano))
-		fmt.Fprintf(stdout, "point-in-time read at the baseline:\n")
+		if err := writef(stdout, "checkpoint %d (created %s) restored\n", id, createdAt.Format(time.RFC3339Nano)); err != nil {
+			return err
+		}
+		if err := writef(stdout, "point-in-time read at the baseline:\n"); err != nil {
+			return err
+		}
 		return printBaselineRead(store, stdout)
 	})
 }
@@ -98,9 +102,13 @@ func printBaselineRead(store *elena.Store, stdout io.Writer) error {
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(stdout, "trajectory %s/%s to seq %d\n", namespace, info.ID, tail)
+			if err := writef(stdout, "trajectory %s/%s to seq %d\n", namespace, info.ID, tail); err != nil {
+				return err
+			}
 			for _, event := range events {
-				fmt.Fprintf(stdout, "  %s\n", eventLine(event))
+				if err := writef(stdout, "  %s\n", eventLine(event)); err != nil {
+					return err
+				}
 			}
 		}
 	}
