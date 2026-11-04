@@ -1,0 +1,44 @@
+{
+  "scenario": "curve",
+  "driver": "elena",
+  "workload": "elena-concurrency-curve",
+  "sync_tier": "sync-none",
+  "points": [
+    {
+      "concurrency": 1,
+      "ops": 4096,
+      "elapsed_ns": 12646327,
+      "throughput_ops_sec": 323888.5092881119,
+      "p50_ns": 2393,
+      "p99_ns": 11386,
+      "p999_ns": 37274
+    },
+    {
+      "concurrency": 2,
+      "ops": 8192,
+      "elapsed_ns": 42218479,
+      "throughput_ops_sec": 194038.25514415142,
+      "p50_ns": 4603,
+      "p99_ns": 117951,
+      "p999_ns": 308705
+    },
+    {
+      "concurrency": 4,
+      "ops": 16384,
+      "elapsed_ns": 72117461,
+      "throughput_ops_sec": 227184.9254371282,
+      "p50_ns": 3439,
+      "p99_ns": 345280,
+      "p999_ns": 784313
+    },
+    {
+      "concurrency": 8,
+      "ops": 32768,
+      "elapsed_ns": 137812426,
+      "throughput_ops_sec": 237772.463275554,
+      "p50_ns": 3254,
+      "p99_ns": 712756,
+      "p999_ns": 1275481
+    }
+  ]
+}

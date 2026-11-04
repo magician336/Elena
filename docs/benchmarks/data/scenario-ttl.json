@@ -1,0 +1,52 @@
+{
+  "results": [
+    {
+      "driver": "elena",
+      "workload": "elena-ttl-mix",
+      "phases": [
+        {
+          "phase": "ttl-append-g0",
+          "ops": 1616,
+          "elapsed_ns": 7059830594,
+          "throughput_ops_sec": 228.9006766498624,
+          "latency": {
+            "count": 1616,
+            "min_ns": 3710089,
+            "p50_ns": 4214142,
+            "p99_ns": 8207047,
+            "p999_ns": 12114065,
+            "max_ns": 12122615
+          }
+        },
+        {
+          "phase": "ttl-recreate-g0",
+          "ops": 64,
+          "elapsed_ns": 293778199,
+          "throughput_ops_sec": 217.85142743012048,
+          "latency": {
+            "count": 64,
+            "min_ns": 3768693,
+            "p50_ns": 4145316,
+            "p99_ns": 20543763,
+            "p999_ns": 20543763,
+            "max_ns": 20543763
+          }
+        },
+        {
+          "phase": "ttl-protected-read",
+          "ops": 48,
+          "elapsed_ns": 229992,
+          "throughput_ops_sec": 208702.9114056141,
+          "latency": {
+            "count": 48,
+            "min_ns": 2869,
+            "p50_ns": 3226,
+            "p99_ns": 37910,
+            "p999_ns": 37910,
+            "max_ns": 37910
+          }
+        }
+      ]
+    }
+  ]
+}

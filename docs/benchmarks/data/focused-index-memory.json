@@ -1,0 +1,8 @@
+{
+  "scenario": "index-memory",
+  "result": {
+    "live_entries": 69632,
+    "index_memory_bytes": 5240394,
+    "bytes_per_entry": 75.25841567095588
+  }
+}
