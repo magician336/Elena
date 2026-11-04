@@ -3,6 +3,8 @@ package elena_test
 import (
 	"testing"
 	"time"
+
+	"elena"
 )
 
 // A point-in-time read must return the trajectory's events up to and
@@ -35,6 +37,53 @@ func TestEventsUpToReturnsEventsThroughTheBoundInclusive(t *testing.T) {
 		}
 		if ev.AppendedAt.Before(start) || ev.AppendedAt.After(end) {
 			t.Errorf("event %d AppendedAt = %v, want within the test window", i, ev.AppendedAt)
+		}
+	}
+}
+
+// The bound is an absolute ceiling on sequence numbers, so the edges
+// read as prefixes: a seq below the trajectory's first sequence number
+// reads empty, a seq at the stored tail includes that tail event, a seq
+// beyond the tail reads the whole trajectory, and an empty trajectory
+// reads empty at any seq.
+func TestEventsUpToBoundEdges(t *testing.T) {
+	st := openStore(t)
+	empty := createSession(t, st, "runs", "empty")
+	filled := createSession(t, st, "runs", "alpha")
+	for _, p := range []string{"first", "second", "third"} {
+		mustAppend(t, filled, p)
+	}
+
+	cases := []struct {
+		name  string
+		sess  *elena.Session
+		seq   uint64
+		want  int
+		first bool // whether event 1 must be present, anchoring order
+	}{
+		{"below the first sequence number", filled, 0, 0, false},
+		{"between stored events", filled, 2, 2, true},
+		{"exactly at the stored tail", filled, 3, 3, true},
+		{"beyond the stored tail", filled, 99, 3, true},
+		{"empty trajectory at zero", empty, 0, 0, false},
+		{"empty trajectory beyond zero", empty, 5, 0, false},
+	}
+	for _, tc := range cases {
+		events, err := tc.sess.EventsUpTo(tc.seq)
+		if err != nil {
+			t.Fatalf("EventsUpTo(%d) %s failed: %v", tc.seq, tc.name, err)
+		}
+		if len(events) != tc.want {
+			t.Errorf("EventsUpTo(%d) %s returned %d events, want %d", tc.seq, tc.name, len(events), tc.want)
+			continue
+		}
+		if tc.first {
+			if events[0].Seq != 1 {
+				t.Errorf("EventsUpTo(%d) %s starts at Seq = %d, want 1", tc.seq, tc.name, events[0].Seq)
+			}
+			if last := events[len(events)-1].Seq; last != uint64(len(events)) {
+				t.Errorf("EventsUpTo(%d) %s ends at Seq = %d, want %d", tc.seq, tc.name, last, len(events))
+			}
 		}
 	}
 }
