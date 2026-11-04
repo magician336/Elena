@@ -1,6 +1,9 @@
 package semantic
 
-import "encoding/binary"
+import (
+	"encoding/binary"
+	"errors"
+)
 
 // The key space of the semantic layer. Every key starts with an area
 // byte that separates record classes, followed by the length-prefixed
@@ -88,3 +91,53 @@ func sequenceFromEventKey(prefix, key []byte) (uint64, bool) {
 	}
 	return binary.BigEndian.Uint64(key[len(key)-sequenceWidth:]), true
 }
+
+// namespacePrefix returns the key prefix shared by every entry of one
+// namespace's sessions. The length-prefixed label encoding keeps it free
+// of every other namespace's keys, nested or not, whatever the labels
+// contain.
+func namespacePrefix(namespace string) []byte {
+	prefix := make([]byte, 0, 1+2+len(namespace))
+	prefix = append(prefix, keyAreaSession)
+	prefix = appendLabel(prefix, namespace)
+	return prefix
+}
+
+// parseSessionKey splits a session-area key into its namespace, session
+// ID, and kind byte, reporting whether the framing is well-formed. A
+// kind this layout does not define yet parses as well-formed; the bytes
+// after such a kind are that kind's to define.
+func parseSessionKey(key []byte) (namespace, session string, kind byte, ok bool) {
+	// 0x01 | len(namespace) | namespace | len(session) | session | kind
+	if len(key) < 1+2+2+1 || key[0] != keyAreaSession {
+		return "", "", 0, false
+	}
+	nsLen := int(binary.BigEndian.Uint16(key[1:3]))
+	if len(key) < 3+nsLen+2+1 {
+		return "", "", 0, false
+	}
+	namespace = string(key[3 : 3+nsLen])
+	idOff := 3 + nsLen
+	idLen := int(binary.BigEndian.Uint16(key[idOff : idOff+2]))
+	idOff += 2
+	if len(key) < idOff+idLen+1 {
+		return "", "", 0, false
+	}
+	session = string(key[idOff : idOff+idLen])
+	kind = key[idOff+idLen]
+	switch rest := len(key) - (idOff + idLen + 1); kind {
+	case keyKindMetadata:
+		if rest != 0 {
+			return "", "", 0, false
+		}
+	case keyKindEvent:
+		if rest != sequenceWidth {
+			return "", "", 0, false
+		}
+	}
+	return namespace, session, kind, true
+}
+
+// errCorruptedSessionKey marks a stored session-area key that fails its
+// structural validation at read time.
+var errCorruptedSessionKey = errors.New("elena: corrupted session key")
