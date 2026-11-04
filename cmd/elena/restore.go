@@ -21,8 +21,18 @@ func runRestore(args []string, stdout io.Writer) error {
 		return usagef("command restore wants 1 or 2 arguments: <dir> [id]")
 	}
 	dir := args[0]
+	// The named id is pure usage validation, so it runs before the store
+	// is opened: a bad argument must not leave a created directory behind.
+	var namedID uint64
+	if len(args) == 2 {
+		id, err := strconv.ParseUint(args[1], 10, 64)
+		if err != nil {
+			return usagef("command restore: checkpoint id %q is not a number", args[1])
+		}
+		namedID = id
+	}
 	return withStore(dir, func(store *elena.Store) error {
-		id, err := checkpointToRestore(store, args)
+		id, err := checkpointToRestore(store, args, namedID)
 		if err != nil {
 			return err
 		}
@@ -49,13 +59,9 @@ func runRestore(args []string, stdout io.Writer) error {
 // checkpointToRestore picks the checkpoint to restore: the given ID
 // when the caller named one, the most recent one otherwise. A store
 // with no checkpoints has nothing to restore.
-func checkpointToRestore(store *elena.Store, args []string) (uint64, error) {
+func checkpointToRestore(store *elena.Store, args []string, namedID uint64) (uint64, error) {
 	if len(args) == 2 {
-		id, err := strconv.ParseUint(args[1], 10, 64)
-		if err != nil {
-			return 0, usagef("command restore: checkpoint id %q is not a number", args[1])
-		}
-		return id, nil
+		return namedID, nil
 	}
 	checkpoints, err := store.Checkpoints()
 	if err != nil {
