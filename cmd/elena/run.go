@@ -6,6 +6,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 )
@@ -52,8 +53,10 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprint(stderr, usageText)
 		return 2
 	}
-	cmd := args[0]
+	cmd, rest := args[0], args[1:]
 	switch cmd {
+	case "status":
+		return finish("status", stderr, func() error { return runStatus(rest, stdout) })
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usageText)
 		return 0
@@ -61,5 +64,23 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "command %q not found\n\n", cmd)
 		fmt.Fprint(stderr, usageText)
 		return 2
+	}
+}
+
+// finish turns one command's outcome into an exit code: usage problems
+// print their message (code 2), store failures print the command and
+// the error (code 1), success stays silent and returns 0.
+func finish(cmd string, stderr io.Writer, fn func() error) int {
+	err := fn()
+	var usage *usageError
+	switch {
+	case err == nil:
+		return 0
+	case errors.As(err, &usage):
+		fmt.Fprintln(stderr, err)
+		return 2
+	default:
+		fmt.Fprintf(stderr, "%s: %v\n", cmd, err)
+		return 1
 	}
 }
