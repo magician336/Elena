@@ -57,6 +57,9 @@ race:
 	$(GO) test -race ./...
 
 # cov runs the race suite with coverage and prints the total.
+# -coverpkg attributes hits across packages: the root-package facade
+# tests are the seam for internal/semantic, so their execution of the
+# implementation must land in the profile for the gate to be honest.
 cov:
-	$(GO) test -race -covermode=atomic -coverprofile=coverage.out ./...
+	$(GO) test -race -covermode=atomic -coverpkg=./... -coverprofile=coverage.out ./...
 	$(GO) tool cover -func=coverage.out | tail -n 1
