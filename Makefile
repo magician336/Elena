@@ -7,7 +7,7 @@
 GO ?= go
 GOLANGCI_LINT ?= golangci-lint
 
-.PHONY: lint test race cov layering terms
+.PHONY: lint test race cov layering terms bench-test bench-cov bench-smoke
 
 # lint runs the standard golangci-lint linter set.
 lint:
@@ -70,3 +70,22 @@ race:
 cov:
 	$(GO) test -race -covermode=atomic -coverpkg=./... -coverprofile=coverage.out ./...
 	$(GO) tool cover -func=coverage.out | tail -n 1
+
+# The bench module is its own Go module (bench/go.mod); its gates run
+# the same commands locally as the CI bench job does there.
+
+# bench-test runs the bench module's suite with the race detector.
+bench-test:
+	cd bench && $(GO) test -race ./...
+
+# bench-cov runs the bench module's suite with coverage and prints the
+# total (CI enforces the same >= 80% gate on it).
+bench-cov:
+	cd bench && $(GO) test -race -covermode=atomic -coverprofile=coverage.out ./...
+	cd bench && $(GO) tool cover -func=coverage.out | tail -n 1
+
+# bench-smoke drives each engine through a seconds-scale micro workload
+# end to end via the harness CLI.
+bench-smoke:
+	cd bench && $(GO) run ./cmd/bench --driver elena --ops 50 --value-size 256 --dir "$$(mktemp -d)/elena"
+	cd bench && $(GO) run ./cmd/bench --driver bbolt --ops 50 --value-size 256 --dir "$$(mktemp -d)/bbolt"
