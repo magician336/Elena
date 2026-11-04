@@ -174,17 +174,17 @@ func TestKill9AckedCheckpointRestoresPointInTimeState(t *testing.T) {
 	}
 	assertCheckpointPrefixRun(t, cps, acked)
 
-	cpID, snapshot, ok := ackedStateAtLastCheckpoint(acked)
+	cpID, baseline, ok := ackedStateAtLastCheckpoint(acked)
 	if !ok {
 		t.Fatal("harness observed no acknowledged checkpoint before the kill point")
 	}
-	assertRestoredPointInTime(t, st, spec, payloads, cpID, snapshot)
+	assertRestoredPointInTime(t, st, spec, payloads, cpID, baseline)
 
 	// The restored counter continues from the baseline: the next
 	// append takes baseline+1 — overwriting any unacknowledged event
 	// that landed there, last write wins — and survives a reopen.
 	s0 := createSession(t, st, semanticWriterNamespace, writerSessionName(0))
-	resumed := snapshot[0] + 1
+		resumed := baseline[0] + 1
 	if seq, err := s0.Append([]byte("resumed")); err != nil || seq != resumed {
 		t.Fatalf("Append after restore = (%d, %v), want (%d, nil)", seq, err, resumed)
 	}
@@ -275,11 +275,11 @@ func TestKill9MidBatchCheckpointNoHalfBatch(t *testing.T) {
 
 	// The acknowledged checkpoint of the last committed group restores
 	// to the acknowledged state at its ack line.
-	cpID, snapshot, ok := ackedStateAtLastCheckpoint(acked)
+	cpID, baseline, ok := ackedStateAtLastCheckpoint(acked)
 	if !ok {
 		t.Fatal("harness observed no acknowledged checkpoint before the kill point")
 	}
-	assertRestoredPointInTime(t, st, spec, payloads, cpID, snapshot)
+	assertRestoredPointInTime(t, st, spec, payloads, cpID, baseline)
 
 	// The recovered store stays writable, and the post-kill write
 	// survives another reopen.
@@ -388,13 +388,13 @@ func ackCountThroughCheckpoint(t *testing.T, stream []semanticAck, k int) int {
 }
 
 // ackedStateAtLastCheckpoint returns the last acknowledged
-// checkpoint's ID together with the per-session sequence snapshot of
+// checkpoint's ID together with the per-session sequence baseline of
 // the acknowledged events at the moment its ack line appeared — the
 // baseline the checkpoint's manifest must record.
 func ackedStateAtLastCheckpoint(acked []semanticAck) (uint64, map[int]uint64, bool) {
 	counts := make(map[int]uint64)
 	var cpID uint64
-	var snapshot map[int]uint64
+	var baseline map[int]uint64
 	for _, ack := range acked {
 		if ack.kind == 'A' {
 			if ack.seq > counts[ack.session] {
@@ -403,12 +403,12 @@ func ackedStateAtLastCheckpoint(acked []semanticAck) (uint64, map[int]uint64, bo
 			continue
 		}
 		cpID = ack.cpID
-		snapshot = make(map[int]uint64, len(counts))
+		baseline = make(map[int]uint64, len(counts))
 		for session, seq := range counts {
-			snapshot[session] = seq
+			baseline[session] = seq
 		}
 	}
-	return cpID, snapshot, cpID != 0
+	return cpID, baseline, cpID != 0
 }
 
 // assertCheckpointPrefixRun verifies the listed checkpoints form a
@@ -431,16 +431,16 @@ func assertCheckpointPrefixRun(t *testing.T, cps []elena.CheckpointInfo, acked [
 
 // assertRestoredPointInTime restores the acknowledged checkpoint cpID
 // and verifies the point-in-time read of every session equals the
-// acknowledged trajectory prefix the snapshot recorded — events
+// acknowledged trajectory prefix the baseline recorded — events
 // byte-exact, endpoint included — which is exactly the state the
 // parent watched the child acknowledge before that checkpoint line.
-func assertRestoredPointInTime(t *testing.T, st *elena.Store, spec SemanticWriterSpec, payloads [][]byte, cpID uint64, snapshot map[int]uint64) {
+func assertRestoredPointInTime(t *testing.T, st *elena.Store, spec SemanticWriterSpec, payloads [][]byte, cpID uint64, baseline map[int]uint64) {
 	t.Helper()
 	if err := st.Restore(cpID); err != nil {
 		t.Fatalf("Restore(%d) of an acknowledged checkpoint after kill -9 failed: %v", cpID, err)
 	}
 	for i := 0; i < spec.Sessions; i++ {
-		want := snapshot[i] // a session without acknowledged events reads empty
+		want := baseline[i] // a session without acknowledged events reads empty
 		events, err := createSession(t, st, semanticWriterNamespace, writerSessionName(i)).EventsUpTo(want)
 		if err != nil {
 			t.Fatalf("EventsUpTo(%d) of s%d after restore failed: %v", want, i, err)
