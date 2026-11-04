@@ -1,5 +1,12 @@
 package main
 
+// Maintenance: extend this table whenever GLOSSARY.md gains a term or an
+// _Avoid_ entry, and add a fixture line to main_test.go next to it.
+// New public artifacts (README sections, web pages, benchmark reports)
+// need no registration — anything Git tracks is scanned by default;
+// a deliberate exception goes into excludedPaths or a context allow
+// with a comment saying why, and the CI terms job is the merge gate.
+
 import (
 	"regexp"
 	"strings"
