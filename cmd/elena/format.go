@@ -2,10 +2,32 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"time"
 
 	"elena"
 )
+
+// previewWidth bounds an event's payload preview: quoted bytes up to
+// this many, a marker for the rest — the stored payload stays opaque
+// and whole, the dump shows enough to inspect.
+const previewWidth = 64
+
+// eventLine renders one event for the human-readable exports: sequence
+// number, append timestamp, payload size, and the payload preview.
+func eventLine(event elena.Event) string {
+	return fmt.Sprintf("event #%d  %s  %d bytes  %s",
+		event.Seq, event.AppendedAt.Format(time.RFC3339Nano), len(event.Payload), quotePreview(event.Payload))
+}
+
+// quotePreview renders a payload Go-quoted — non-printable and
+// non-UTF-8 bytes appear as escapes, so any payload renders as text.
+func quotePreview(payload []byte) string {
+	if len(payload) > previewWidth {
+		return fmt.Sprintf("%q ...", payload[:previewWidth])
+	}
+	return fmt.Sprintf("%q", payload)
+}
 
 // openCLI opens the store for one command run. The sweep is off in
 // every CLI process: a short-lived command starts no background work,

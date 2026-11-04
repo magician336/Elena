@@ -57,6 +57,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	switch cmd {
 	case "status":
 		return finish("status", stderr, func() error { return runStatus(rest, stdout) })
+	case "dump":
+		return finish("dump", stderr, func() error { return runDump(rest, stdout) })
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usageText)
 		return 0
