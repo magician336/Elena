@@ -109,7 +109,7 @@ func (e *Engine) Stats() Stats {
 	defer e.mu.RUnlock()
 
 	s := Stats{
-		LiveEntries:   uint64(len(e.index)),
+		LiveEntries:   uint64(e.index.count()),
 		BytesWritten:  e.bytesWritten.Load(),
 		BytesFlushed:  e.bytesFlushed.Load(),
 		OpsPut:        e.opsPut.Load(),
@@ -135,11 +135,8 @@ func (e *Engine) Stats() Stats {
 		s.DeadEntries = totalEntries - s.LiveEntries
 	}
 
-	var keyBytes uint64
-	for key := range e.index {
-		keyBytes += uint64(len(key))
-	}
-	s.LiveBytes = e.liveBytes
+	keyBytes := e.index.keyBytes()
+	s.LiveBytes = e.index.liveTotal()
 	s.IndexMemoryBytes = s.LiveEntries*indexEntryOverhead + keyBytes
 	if s.DataBytes > s.LiveBytes {
 		s.DeadBytes = s.DataBytes - s.LiveBytes
@@ -156,7 +153,7 @@ func (e *Engine) Stats() Stats {
 func (e *Engine) fileStatsLocked() []FileStats {
 	files := make([]FileStats, 0, len(e.files))
 	for id, df := range e.files {
-		files = append(files, FileStats{FileID: id, SizeBytes: df.bytes, Entries: df.entries, Active: id == e.activeID})
+		files = append(files, FileStats{FileID: id, SizeBytes: df.bytes.Load(), Entries: df.entries.Load(), Active: id == e.activeID})
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].FileID < files[j].FileID })
 	return files

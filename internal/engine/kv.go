@@ -103,10 +103,13 @@ func (e *Engine) putExpires(key, value []byte, expires int64) error {
 
 	e.mu.RLock()
 	closed := e.closed
-	offset := e.activeOffset
 	active := e.files[e.activeID]
 	maxKey, maxVal := e.maxKeySize, e.maxValueSize
 	e.mu.RUnlock()
+	// The append offset is read after the handle capture, not with it:
+	// both are coherent because this whole path holds writeMu (the one
+	// writer of activeOffset and the only mutator of the active handle).
+	offset := e.activeOffset.Load()
 	if closed {
 		return ErrClosed
 	}
@@ -147,7 +150,7 @@ func (e *Engine) Get(key []byte) ([]byte, error) {
 	if e.closed {
 		return nil, ErrClosed
 	}
-	ref, ok := e.index[string(key)]
+	ref, ok := e.index.get(string(key))
 	if !ok {
 		return nil, ErrNotFound
 	}
@@ -217,10 +220,10 @@ func (e *Engine) maybeAutoMerge() {
 	e.mu.RLock()
 	var total int64
 	for _, df := range e.files {
-		total += df.bytes
+		total += df.bytes.Load()
 	}
-	live := e.liveBytes
 	e.mu.RUnlock()
+	live := e.index.liveTotal()
 	if total <= 0 || live > uint64(total) {
 		return
 	}
@@ -255,26 +258,23 @@ func (e *Engine) appendActive(active *os.File, buf []byte) error {
 	return nil
 }
 
-// finishAppend is the critical section every write path runs once its
-// bytes are durable in the active file: under mu it publishes the
-// appended entries in the index, keeps the per-file and append-offset
-// accounting exact, and reports whether the active file has outgrown
-// Options.MaxDataFileSize. publish runs with mu held — it may call
-// applyEntry/dropKey directly and must apply the appended entries in
-// append order, so later entries win exactly as sequential single
-// writes would. The caller holds writeMu, passes the active data file
-// it captured earlier and the number of entries buf holds; acting on a
-// true return (rotation) is the caller's job — under writeMu, after
-// mu has been released here.
+// finishAppend is the publication step every write path runs once its
+// bytes are durable in the active file: publish puts the appended
+// entries into the index (shard by shard — an append never takes the
+// engine's global mu, which is what decouples readers from the write
+// path's serialization), the per-file and append-offset accounting
+// follows as atomic updates, and the return reports whether the active
+// file has outgrown Options.MaxDataFileSize. publish must apply the
+// appended entries in append order, so later entries win exactly as
+// sequential single writes would. The caller holds writeMu, passes the
+// active data file it captured earlier and the number of entries buf
+// holds; acting on a true return (rotation) is the caller's job —
+// under writeMu, after this returns.
 func (e *Engine) finishAppend(active *dataFile, buf []byte, entries uint64, publish func()) bool {
-	e.mu.Lock()
 	publish()
-	active.entries += entries
-	active.bytes += int64(len(buf))
-	e.activeOffset += int64(len(buf))
-	rotate := e.activeOffset > int64(e.maxDataFileSize)
-	e.mu.Unlock()
-	return rotate
+	active.entries.Add(entries)
+	active.bytes.Add(int64(len(buf)))
+	return e.activeOffset.Add(int64(len(buf))) > int64(e.maxDataFileSize)
 }
 
 // readEntry reads the entry located by ref and returns a copy of its

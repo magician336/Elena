@@ -90,7 +90,7 @@ func (e *Engine) freezeMergeSet() (frozen mergeFrozen, ok bool, err error) {
 	closed := e.closed
 	var totalEntries uint64
 	for _, df := range e.files {
-		totalEntries += df.entries
+		totalEntries += df.entries.Load()
 	}
 	e.mu.RUnlock()
 	if closed {
@@ -122,7 +122,7 @@ func (e *Engine) freezeMergeSet() (frozen mergeFrozen, ok bool, err error) {
 	e.files[outID] = &dataFile{f: out}
 	e.files[nextActiveID] = &dataFile{f: nextActive}
 	e.activeID = nextActiveID
-	e.activeOffset = 0
+	e.activeOffset.Store(0)
 	e.mu.Unlock()
 
 	return mergeFrozen{out: out, outID: outID, merged: merged}, true, nil
@@ -158,18 +158,7 @@ func (e *Engine) switchToMerged(frozen mergeFrozen, newRefs map[string]entryRef,
 		e.discardMergeFiles(frozen.outID)
 		return ErrClosed
 	}
-	for key, ref := range e.index {
-		if _, old := mergedSet[ref.fileID]; !old {
-			continue // writer raced ahead into the successor active file
-		}
-		e.liveBytes -= uint64(ref.size)
-		if newRef, ok := newRefs[key]; ok {
-			e.index[key] = newRef
-			e.liveBytes += uint64(newRef.size)
-		} else {
-			delete(e.index, key) // the entry expired before or during the rewrite
-		}
-	}
+	e.index.rekey(mergedSet, newRefs)
 	for _, id := range frozen.merged {
 		df := e.files[id]
 		delete(e.files, id)
@@ -183,8 +172,8 @@ func (e *Engine) switchToMerged(frozen mergeFrozen, newRefs map[string]entryRef,
 			e.retired = append(e.retired, df)
 		}
 	}
-	e.files[frozen.outID].entries = uint64(len(newRefs))
-	e.files[frozen.outID].bytes = int64(flushed)
+	e.files[frozen.outID].entries.Store(uint64(len(newRefs)))
+	e.files[frozen.outID].bytes.Store(int64(flushed))
 	e.mu.Unlock()
 	e.writeMu.Unlock()
 
@@ -237,13 +226,13 @@ func (e *Engine) rewriteInto(out *os.File, outID uint32, merged []uint32) (map[s
 	}
 
 	e.mu.RLock()
-	items := make([]rewriteItem, 0, len(e.index))
-	for key, ref := range e.index {
+	items := make([]rewriteItem, 0, e.index.count())
+	e.index.eachInstant(func(key string, ref entryRef) {
 		if _, old := mergedSet[ref.fileID]; !old {
-			continue
+			return // writer raced ahead into the successor active file
 		}
 		items = append(items, rewriteItem{key: key, ref: ref, df: e.files[ref.fileID]})
-	}
+	})
 	e.mu.RUnlock()
 
 	hintPath := filepath.Join(e.dir, hintFileName(outID))
