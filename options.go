@@ -94,3 +94,30 @@ func WithSyncInterval(period time.Duration) OpenOption {
 		o.syncPeriod = period
 	}
 }
+
+// WithSyncAlways selects the default sync policy: every append is
+// fdatasync'ed before it acknowledges, so an acknowledged event is
+// durable against any fault — process crash or power loss alike. This
+// is the highest-durability, highest-latency tier, and the one Open
+// uses when no sync option is given; WithSyncAlways exists to override
+// an earlier sync option.
+func WithSyncAlways() OpenOption {
+	return func(o *openOptions) {
+		o.syncPolicy = semantic.SyncAlways
+	}
+}
+
+// WithSyncNone selects no syncing of the data files: maximum
+// throughput, and the loss window is the whole OS page cache — a
+// machine-level fault can lose every event the kernel has not written
+// back on its own, including events of stores closed long ago. No
+// durability claim is made beyond this: an acknowledged event is
+// visible to readers of the same running store. Structural metadata —
+// hint publication, merge output, file creation — is still synced, so
+// what the tier trades away is data-entry durability, never recovery
+// integrity: a reopened directory always rebuilds a consistent index.
+func WithSyncNone() OpenOption {
+	return func(o *openOptions) {
+		o.syncPolicy = semantic.SyncNone
+	}
+}
