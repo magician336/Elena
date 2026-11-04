@@ -557,6 +557,51 @@ func TestBatchCommitRejectingOversizedPayloadFailsWhole(t *testing.T) {
 	}
 }
 
+// Events appended to a timed session through a batch must carry the
+// session's deadline like any other event: the whole trajectory turns
+// invisible together when the TTL elapses, while the checkpoint —
+// stored without a deadline — remains listable.
+func TestBatchCarriesTimedSessionsDeadline(t *testing.T) {
+	st := openStore(t)
+	const ttl = 400 * time.Millisecond
+	sess := createTimedSession(t, st, "runs", "alpha", ttl)
+
+	batch := st.NewBatch()
+	for _, payload := range []string{"first", "second"} {
+		if err := batch.Append(sess, []byte(payload)); err != nil {
+			t.Fatalf("batch Append(%q) failed: %v", payload, err)
+		}
+	}
+	batch.Checkpoint()
+	if _, id, err := batch.Commit(); err != nil || id == 0 {
+		t.Fatalf("batch Commit() = (id %d, %v), want a committed checkpoint", id, err)
+	}
+
+	events, err := sess.Events()
+	if err != nil {
+		t.Fatalf("Events() before the deadline failed: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("Events() before the deadline returned %d events, want 2", len(events))
+	}
+
+	waitForTTLElapse(ttl)
+	events, err = sess.Events()
+	if err != nil {
+		t.Fatalf("Events() after the deadline failed: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("Events() after the deadline returned %d events, want 0 — batch events must carry the session deadline", len(events))
+	}
+	checkpoints, err := st.Checkpoints()
+	if err != nil {
+		t.Fatalf("Checkpoints() after the deadline failed: %v", err)
+	}
+	if len(checkpoints) != 1 {
+		t.Fatalf("Checkpoints() after the deadline returned %d checkpoints, want 1 — the checkpoint itself has no deadline", len(checkpoints))
+	}
+}
+
 // Checkpoint creation, listing, batch commits, and plain appends must
 // run concurrently without losing events or inventing duplicate
 // checkpoint IDs: every checkpoint lists alone under its own ID, and
