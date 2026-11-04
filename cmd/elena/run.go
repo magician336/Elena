@@ -61,6 +61,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return finish("dump", stderr, func() error { return runDump(rest, stdout) })
 	case "merge":
 		return finish("merge", stderr, func() error { return runMerge(rest, stdout) })
+	case "checkpoint":
+		return finish("checkpoint", stderr, func() error { return runCheckpoint(rest, stdout) })
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usageText)
 		return 0
