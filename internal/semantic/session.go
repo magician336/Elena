@@ -35,6 +35,21 @@ var ErrInvalidLabel = errors.New("elena: namespace and session ID must be non-em
 // range.
 var ErrInvalidTTL = errors.New("elena: session ttl must be positive and storable")
 
+// ErrSessionExists is returned by the create calls when the named
+// session already exists with a different lifecycle form — perpetual
+// against timed, in either direction. The lifecycle is a property of
+// the stored session, not of the handle a call asks for; a timed
+// session's deadline cannot be changed once set (renewal is out of
+// scope), so re-creating across forms fails instead of silently
+// returning a session with a different lifetime than requested.
+var ErrSessionExists = errors.New("elena: session already exists with a different lifecycle form")
+
+// ErrSessionEnded is returned by Append when the session's TTL has
+// elapsed: the session — metadata and events — already reads as if
+// never written, and a write now would resurrect half of one. Create
+// the name again for a fresh session.
+var ErrSessionEnded = errors.New("elena: session TTL elapsed")
+
 var (
 	errMalformedMetadata = errors.New("elena: malformed session metadata")
 	errDetachedSession   = errors.New("elena: session handle detached from its store")
@@ -110,6 +125,18 @@ type lifecycleForm struct {
 	ttl time.Duration
 }
 
+// timed reports whether the trajectory belongs to a session with a
+// deadline.
+func (t *trajectory) timed() bool {
+	return !t.deadline.IsZero()
+}
+
+// elapsed reports whether a timed trajectory's deadline has passed. A
+// perpetual trajectory never elapses.
+func (t *trajectory) elapsed(now time.Time) bool {
+	return t.timed() && !now.Before(t.deadline)
+}
+
 // Session is a handle to one session's trajectory. Handles obtained
 // from repeated CreateSession calls share the trajectory's state.
 // All methods are safe for use from multiple goroutines.
@@ -152,13 +179,23 @@ func (s *Store) createSession(namespace, session string, form lifecycleForm) (*S
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if _, ok := s.trajectories[key]; !ok {
-		traj, err := s.attachTrajectory(key, form)
-		if err != nil {
-			return nil, err
+	if traj, ok := s.trajectories[key]; ok {
+		switch {
+		case traj.elapsed(time.Now()):
+			// The session's TTL elapsed: it reads as if never written,
+			// so the name is free — fall through and create it anew.
+		case traj.timed() == form.timed:
+			return &Session{store: s, key: key}, nil
+		default:
+			return nil, fmt.Errorf("elena: create session %q: %w", key.display(), ErrSessionExists)
 		}
-		s.trajectories[key] = traj
 	}
+
+	traj, err := s.attachTrajectory(key, form)
+	if err != nil {
+		return nil, err
+	}
+	s.trajectories[key] = traj
 	return &Session{store: s, key: key}, nil
 }
 
@@ -193,9 +230,12 @@ func (s *Store) attachTrajectory(key trajKey, form lifecycleForm) (*trajectory, 
 	value, err := s.eng.Get(meta)
 	switch {
 	case err == nil:
-		_, storedDeadline, derr := decodeMetadata(value)
+		storedForm, storedDeadline, derr := decodeMetadata(value)
 		if derr != nil {
 			return nil, fmt.Errorf("elena: attach session %q: %w", key.display(), derr)
+		}
+		if storedForm.timed != form.timed {
+			return nil, fmt.Errorf("elena: create session %q: %w", key.display(), ErrSessionExists)
 		}
 		deadline = storedDeadline
 	case errors.Is(err, engine.ErrNotFound):
@@ -267,7 +307,10 @@ func (s *Store) lastSequence(key trajKey) (uint64, error) {
 // Append appends payload to the trajectory as its next event and
 // returns the event's sequence number, starting at 1. The payload is
 // copied and treated as opaque bytes; an acknowledged append is durable
-// the moment Append returns.
+// the moment Append returns. An event of a timed session carries the
+// session's deadline, so the whole trajectory turns invisible together;
+// appending once that deadline has passed fails with an error wrapping
+// ErrSessionEnded, and no sequence number is handed out for it.
 //
 // Sequence allocation and the append form one atomic step under the
 // store's write lock, so appends from concurrent goroutines hand out a
@@ -282,6 +325,9 @@ func (sess *Session) Append(payload []byte) (uint64, error) {
 	if !ok {
 		return 0, fmt.Errorf("elena: append to %q: %w", sess.key.display(), errDetachedSession)
 	}
+	if traj.elapsed(time.Now()) {
+		return 0, fmt.Errorf("elena: append to %q: %w", sess.key.display(), ErrSessionEnded)
+	}
 	if traj.lastSeq == math.MaxUint64 {
 		return 0, fmt.Errorf("elena: append to %q: %w", sess.key.display(), errSequenceExhausted)
 	}
@@ -292,7 +338,7 @@ func (sess *Session) Append(payload []byte) (uint64, error) {
 	seq := traj.lastSeq + 1
 	key := eventKey(sess.key.namespace, sess.key.session, seq)
 	value := encodeEnvelope(seq, time.Now(), payload)
-	if err := st.putEntry("append event", key, value, traj.deadline, ErrInvalidTTL); err != nil {
+	if err := st.putEntry("append event", key, value, traj.deadline, ErrSessionEnded); err != nil {
 		return 0, err
 	}
 	traj.lastSeq = seq

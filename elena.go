@@ -43,9 +43,12 @@ type Session struct {
 
 // CreateSession creates the perpetual session named session in
 // namespace and returns a handle for appending to and reading its
-// trajectory. Creating an existing session returns a handle that
-// continues the stored trajectory: its sequence numbers continue from
-// the last stored event, across Close and Open.
+// trajectory. Creating an existing perpetual session returns a handle
+// that continues the stored trajectory: its sequence numbers continue
+// from the last stored event, across Close and Open. Creating a session
+// that exists with a TTL fails with an error wrapping ErrSessionExists
+// — unless that TTL has already elapsed, in which case the session
+// reads as if never written and the name is free to start fresh.
 func (s *Store) CreateSession(namespace, session string) (*Session, error) {
 	inner, err := s.store.CreateSession(namespace, session)
 	if err != nil {
@@ -63,6 +66,16 @@ func (s *Store) CreateSession(namespace, session string) (*Session, error) {
 // the stored entries, so it survives Close and Open. The ttl must be
 // positive and its deadline storable (an error wrapping ErrInvalidTTL
 // otherwise).
+//
+// Creating a session that already exists: with a TTL it is idempotent —
+// the call returns a handle to the stored session and the ttl argument
+// is consulted only when the session is first created, so the recorded
+// deadline governs and a TTL cannot be renewed (out of scope). Once
+// that deadline has elapsed the session is gone as if never written and
+// the name is free: creating it again starts a fresh session, with a
+// fresh trajectory, in either lifecycle form. Creating a perpetual
+// session that exists with a TTL (or the reverse) fails with an error
+// wrapping ErrSessionExists.
 func (s *Store) CreateSessionWithTTL(namespace, session string, ttl time.Duration) (*Session, error) {
 	inner, err := s.store.CreateSessionWithTTL(namespace, session, ttl)
 	if err != nil {
@@ -75,7 +88,9 @@ func (s *Store) CreateSessionWithTTL(namespace, session string, ttl time.Duratio
 // returns the event's sequence number, starting at 1. The payload is
 // copied and treated as opaque bytes; an acknowledged append is durable
 // the moment Append returns. Appends from concurrent goroutines hand
-// out a hole-free, strictly increasing sequence.
+// out a hole-free, strictly increasing sequence. Appending to a timed
+// session whose TTL has elapsed fails with an error wrapping
+// ErrSessionEnded — the session already reads as if never written.
 func (sess *Session) Append(payload []byte) (uint64, error) {
 	return sess.session.Append(payload)
 }
@@ -137,6 +152,20 @@ var ErrInvalidLabel = semantic.ErrInvalidLabel
 // when the TTL cannot define a future deadline: zero, negative, or
 // beyond the storable range.
 var ErrInvalidTTL = semantic.ErrInvalidTTL
+
+// ErrSessionExists is wrapped into the error the create calls return
+// when the named session already exists with a different lifecycle
+// form — perpetual against timed, in either direction. The lifecycle is
+// a property of the stored session, and a TTL cannot be renewed once
+// set, so re-creating across forms fails instead of silently returning
+// a session with a different lifetime than requested.
+var ErrSessionExists = semantic.ErrSessionExists
+
+// ErrSessionEnded is wrapped into the error Append returns when the
+// session's TTL has elapsed: the session — metadata and events —
+// already reads as if never written, and a write now would resurrect
+// half of one. Create the name again for a fresh session.
+var ErrSessionEnded = semantic.ErrSessionEnded
 
 // ErrClosed is wrapped into the errors of operations attempted after
 // Close.
