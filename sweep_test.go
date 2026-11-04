@@ -85,6 +85,79 @@ func TestMergeReclaimsElapsedSessionBytes(t *testing.T) {
 	}
 }
 
+// With a configured sweep period, an elapsed session is reclaimed with
+// no manual call at all: the sweep notices the deadline on its next
+// check and the merge it triggers returns the bytes — the contrast
+// assertion of the TTL ticket reversed through the background path this
+// time. Further checks after the reclaim are no-ops — the sweep is
+// idempotent, exactly one merge runs — and visibility was gone the
+// moment the deadline passed, not when the sweep acted.
+func TestSweepReclaimsElapsedSessionAutomatically(t *testing.T) {
+	dir := t.TempDir()
+	st, err := elena.Open(dir, elena.WithSweepPeriod(25*time.Millisecond))
+	if err != nil {
+		t.Fatalf("Open(WithSweepPeriod) failed: %v", err)
+	}
+	defer closeStore(t, st)
+
+	const ttl = 300 * time.Millisecond
+	sess := createTimedSession(t, st, "runs", "temp", ttl)
+	for i := 0; i < 3; i++ {
+		mustAppend(t, sess, "event")
+	}
+
+	waitForStats(t, st, "the sweep to reclaim the elapsed session", func(s elena.Stats) bool {
+		return s.LiveEntries == 0 && s.DataBytes == 0
+	})
+	merged := waitForStats(t, st, "the sweep's merge to be counted", func(s elena.Stats) bool {
+		return s.OpsMerge >= 1
+	})
+	if merged.OpsMerge != 1 {
+		t.Errorf("Stats().OpsMerge = %d, want exactly 1 — one signal, one merge", merged.OpsMerge)
+	}
+
+	// Idempotence: several more periods change nothing. The signal was
+	// consumed, the bytes are back, and repeated sweeps have no side
+	// effect to have.
+	time.Sleep(150 * time.Millisecond)
+	settled := st.Stats()
+	for _, tc := range []struct {
+		name string
+		got  uint64
+		want uint64
+	}{
+		{"LiveEntries", settled.LiveEntries, 0},
+		{"DataBytes", settled.DataBytes, 0},
+		{"LiveBytes", settled.LiveBytes, 0},
+		{"DeadBytes", settled.DeadBytes, 0},
+		{"OpsMerge", settled.OpsMerge, merged.OpsMerge},
+	} {
+		if tc.got != tc.want {
+			t.Errorf("Stats().%s after further sweeps = %d, want %d (unchanged)", tc.name, tc.got, tc.want)
+		}
+	}
+
+	// Visibility was gone at the deadline, before and regardless of the
+	// sweep acting.
+	events, err := sess.Events()
+	if err != nil {
+		t.Fatalf("Events() after the sweep failed: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("Events() after the sweep returned %d events, want 0", len(events))
+	}
+	if _, err := sess.Event(1); !errors.Is(err, elena.ErrEventNotFound) {
+		t.Errorf("Event(1) after the sweep err = %v, want ErrEventNotFound", err)
+	}
+	sessions, err := st.Sessions("runs")
+	if err != nil {
+		t.Fatalf("Sessions() after the sweep failed: %v", err)
+	}
+	if len(sessions) != 0 {
+		t.Fatalf("Sessions() after the sweep returned %d sessions, want 0", len(sessions))
+	}
+}
+
 // WithSweepPeriod must reject periods that cannot define a check
 // interval — zero or negative — with ErrInvalidSweepPeriod, and hand
 // back no store, leaving the directory free to open afterwards.
