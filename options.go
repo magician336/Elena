@@ -28,9 +28,10 @@ type openOptions struct {
 }
 
 // config validates the accumulated options and returns the semantic
-// layer's configuration they amount to.
+// layer's configuration they amount to. The last sweep option wins, so
+// a period is validated only when it is what the store will use.
 func (o *openOptions) config() (semantic.Config, error) {
-	if o.sweepPeriodSet && o.sweepPeriod <= 0 {
+	if !o.sweepDisabled && o.sweepPeriodSet && o.sweepPeriod <= 0 {
 		return semantic.Config{}, fmt.Errorf("sweep period %d: %w", o.sweepPeriod, ErrInvalidSweepPeriod)
 	}
 	return semantic.Config{
@@ -50,5 +51,18 @@ func WithSweepPeriod(period time.Duration) OpenOption {
 		o.sweepPeriod = period
 		o.sweepPeriodSet = true
 		o.sweepDisabled = false
+	}
+}
+
+// WithSweepDisabled turns the background sweep off: no sweep goroutine
+// exists, expiration is purely lazy. Elapsed sessions are invisible the
+// moment their deadline passes, but their bytes come back only when
+// some merge runs — a manual Merge call, or a sweep of a later Open on
+// the same directory. Embedded hosts that want full control over
+// background work want this; the default is the sweep on, one check per
+// DefaultSweepPeriod.
+func WithSweepDisabled() OpenOption {
+	return func(o *openOptions) {
+		o.sweepDisabled = true
 	}
 }

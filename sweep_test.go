@@ -158,6 +158,107 @@ func TestSweepReclaimsElapsedSessionAutomatically(t *testing.T) {
 	}
 }
 
+// WithSweepDisabled no background merge may ever run: expiration is
+// purely lazy. The elapsed session is invisible at once, but its bytes
+// stand on disk — OpsMerge stays 0 — until a manual Merge reclaims
+// them.
+func TestSweepDisabledLeavesReclamationToManualMerge(t *testing.T) {
+	dir := t.TempDir()
+	st, err := elena.Open(dir, elena.WithSweepDisabled())
+	if err != nil {
+		t.Fatalf("Open(WithSweepDisabled) failed: %v", err)
+	}
+	defer closeStore(t, st)
+
+	const ttl = 300 * time.Millisecond
+	sess := createTimedSession(t, st, "runs", "temp", ttl)
+	for i := 0; i < 3; i++ {
+		mustAppend(t, sess, "event")
+	}
+	before := st.Stats()
+
+	waitForTTLElapse(ttl)
+	events, err := sess.Events()
+	if err != nil {
+		t.Fatalf("Events() after the deadline failed: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("Events() after the deadline returned %d events, want 0", len(events))
+	}
+
+	// Far beyond a period later, nothing has reclaimed the bytes: with
+	// the sweep off, no merge runs on its own.
+	time.Sleep(300 * time.Millisecond)
+	idle := st.Stats()
+	if idle.OpsMerge != 0 {
+		t.Errorf("Stats().OpsMerge = %d, want 0 — no merge may run with the sweep disabled", idle.OpsMerge)
+	}
+	if idle.DataBytes != before.DataBytes || idle.LiveEntries != before.LiveEntries {
+		t.Errorf("Stats() with the sweep disabled drifted: DataBytes %d→%d, LiveEntries %d→%d, want unchanged",
+			before.DataBytes, idle.DataBytes, before.LiveEntries, idle.LiveEntries)
+	}
+
+	if err := st.Merge(); err != nil {
+		t.Fatalf("Merge() with the sweep disabled failed: %v", err)
+	}
+	after := st.Stats()
+	if after.DataBytes != 0 || after.LiveEntries != 0 {
+		t.Errorf("Stats() after manual Merge = (DataBytes %d, LiveEntries %d), want (0, 0)", after.DataBytes, after.LiveEntries)
+	}
+}
+
+// The sweep reclaims elapsed timed sessions; a perpetual session of the
+// same store must be untouched by it: its events stay readable, every
+// remaining byte stays live, and its trajectory keeps accepting appends
+// after the sweep has acted.
+func TestSweepLeavesPerpetualSessionsIntact(t *testing.T) {
+	dir := t.TempDir()
+	st, err := elena.Open(dir, elena.WithSweepPeriod(25*time.Millisecond))
+	if err != nil {
+		t.Fatalf("Open(WithSweepPeriod) failed: %v", err)
+	}
+	defer closeStore(t, st)
+
+	keeper := createSession(t, st, "runs", "keeper")
+	mustAppend(t, keeper, "event")
+	mustAppend(t, keeper, "event")
+	const ttl = 300 * time.Millisecond
+	temp := createTimedSession(t, st, "runs", "temp", ttl)
+	mustAppend(t, temp, "event")
+	mustAppend(t, temp, "event")
+
+	// The sweep reclaims temp: only keeper's metadata and two events
+	// remain, and every remaining byte is live.
+	final := waitForStats(t, st, "the sweep to reclaim the timed session only", func(s elena.Stats) bool {
+		return s.LiveEntries == 3 // keeper's metadata entry plus two events
+	})
+	if final.DataBytes != final.LiveBytes {
+		t.Errorf("Stats() after the sweep: DataBytes = %d, LiveBytes = %d, want equal — nothing dead may remain", final.DataBytes, final.LiveBytes)
+	}
+	if final.DeadBytes != 0 {
+		t.Errorf("Stats().DeadBytes after the sweep = %d, want 0", final.DeadBytes)
+	}
+
+	events, err := keeper.Events()
+	if err != nil {
+		t.Fatalf("Events() of the perpetual session after the sweep failed: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("Events() of the perpetual session after the sweep returned %d events, want 2", len(events))
+	}
+	if seq, err := keeper.Append([]byte("kept")); err != nil || seq != 3 {
+		t.Errorf("Append() to the perpetual session after the sweep = (%d, %v), want (3, nil)", seq, err)
+	}
+
+	sessions, err := st.Sessions("runs")
+	if err != nil {
+		t.Fatalf("Sessions() after the sweep failed: %v", err)
+	}
+	if len(sessions) != 1 || sessions[0].ID != "keeper" || !sessions[0].Deadline.IsZero() {
+		t.Fatalf("Sessions() after the sweep = %+v, want only the perpetual session \"keeper\"", sessions)
+	}
+}
+
 // WithSweepPeriod must reject periods that cannot define a check
 // interval — zero or negative — with ErrInvalidSweepPeriod, and hand
 // back no store, leaving the directory free to open afterwards.
