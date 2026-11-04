@@ -228,3 +228,71 @@ func TestRestoreLeavesPostBaselineSessionsVisibleAndRunning(t *testing.T) {
 		t.Fatalf("Append() of the post-baseline session after restore = (%d, %v), want (3, nil)", seq, err)
 	}
 }
+
+// A restored timed session must elapse at the deadline the checkpoint
+// recorded — the one its stored entries have carried since creation —
+// not at one recomputed at restore time and not at whatever TTL a later
+// attach call names. The gaps between the instants are chosen so a
+// recomputed deadline would still be in the future when the original
+// one has already passed.
+func TestRestoreKeepsTimedSessionsOriginalDeadline(t *testing.T) {
+	dir := t.TempDir()
+	const ttl = 400 * time.Millisecond
+
+	st, err := elena.Open(dir)
+	if err != nil {
+		t.Fatalf("first Open(%q) failed: %v", dir, err)
+	}
+	created := time.Now()
+	sess := createTimedSession(t, st, "runs", "alpha", ttl)
+	mustAppend(t, sess, "event")
+	id, err := st.CreateCheckpoint()
+	if err != nil {
+		t.Fatalf("CreateCheckpoint() failed: %v", err)
+	}
+	// Roughly halfway into the TTL, past a quarter of it: any deadline
+	// recomputed from here on outlives the original.
+	time.Sleep(ttl / 2)
+	if err := st.Close(); err != nil {
+		t.Fatalf("Close() failed: %v", err)
+	}
+
+	reopened, err := elena.Open(dir)
+	if err != nil {
+		t.Fatalf("second Open(%q) failed: %v", dir, err)
+	}
+	defer closeStore(t, reopened)
+	if err := reopened.Restore(id); err != nil {
+		t.Fatalf("Restore(%d) failed: %v", id, err)
+	}
+
+	// Attaching with a much larger TTL must not renew either: the
+	// restored deadline governs.
+	restored := createTimedSession(t, reopened, "runs", "alpha", time.Hour)
+	if seq, err := restored.Append([]byte("still-live")); err != nil || seq != 2 {
+		t.Fatalf("Append() before the original deadline = (%d, %v), want (2, nil)", seq, err)
+	}
+	events, err := restored.Events()
+	if err != nil {
+		t.Fatalf("Events() before the original deadline failed: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("Events() before the original deadline returned %d events, want 2", len(events))
+	}
+
+	// Past the original deadline — though far short of both the hour
+	// this attach call asked for and any deadline recomputed at restore
+	// time — the session must be gone.
+	remaining := time.Until(created.Add(ttl + 150*time.Millisecond))
+	time.Sleep(max(remaining, 0))
+	events, err = restored.Events()
+	if err != nil {
+		t.Fatalf("Events() after the original deadline failed: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("Events() after the original deadline returned %d events, want 0 — the restored deadline, not a recomputed one, must govern", len(events))
+	}
+	if _, err := restored.Append([]byte("event")); !errors.Is(err, elena.ErrSessionEnded) {
+		t.Errorf("Append() after the original deadline err = %v, want ErrSessionEnded", err)
+	}
+}
