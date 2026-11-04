@@ -183,3 +183,84 @@ func TestConcurrentReadsDuringAppend(t *testing.T) {
 		t.Fatalf("final Events() returned %d events, want %d", len(events), total)
 	}
 }
+
+// Point-in-time reads must run concurrently with appends: every read
+// observes a consistent prefix of the trajectory — sequence numbers
+// 1..k in order, never past the bound — and once the writers finish,
+// the bounded read returns exactly the events the bound covers.
+func TestConcurrentPointInTimeReadsDuringAppend(t *testing.T) {
+	st := openStore(t)
+	sess := createSession(t, st, "runs", "busy")
+
+	const writers = 4
+	const perWriter = 25
+	total := writers * perWriter
+	const bound = uint64(40)
+
+	writing := atomic.Bool{}
+	writing.Store(true)
+
+	var writerGroup sync.WaitGroup
+	for w := 0; w < writers; w++ {
+		writerGroup.Add(1)
+		go func(w int) {
+			defer writerGroup.Done()
+			for i := 0; i < perWriter; i++ {
+				if _, err := sess.Append([]byte(fmt.Sprintf("w%d-%d", w, i))); err != nil {
+					t.Errorf("Append() error: %v", err)
+					return
+				}
+			}
+		}(w)
+	}
+
+	readsDone := make(chan struct{})
+	go func() {
+		defer close(readsDone)
+		for writing.Load() {
+			events, err := sess.EventsUpTo(bound)
+			if err != nil {
+				t.Errorf("EventsUpTo(%d) error: %v", bound, err)
+				return
+			}
+			if uint64(len(events)) > bound {
+				t.Errorf("EventsUpTo(%d) returned %d events, want at most %d", bound, len(events), bound)
+				return
+			}
+			for i, ev := range events {
+				if ev.Seq != uint64(i+1) {
+					t.Errorf("read observed sequence %d at position %d: not a consistent prefix", ev.Seq, i)
+					return
+				}
+			}
+		}
+	}()
+
+	writerGroup.Wait()
+	writing.Store(false)
+	<-readsDone
+
+	// With the writers done, the bounded read must settle on exactly the
+	// events the bound covers — endpoint included — and agree event for
+	// event with the full read's prefix.
+	bounded, err := sess.EventsUpTo(bound)
+	if err != nil {
+		t.Fatalf("final EventsUpTo(%d) failed: %v", bound, err)
+	}
+	if len(bounded) != int(bound) {
+		t.Fatalf("final EventsUpTo(%d) returned %d events, want %d", bound, len(bounded), bound)
+	}
+	full, err := sess.Events()
+	if err != nil {
+		t.Fatalf("final Events() failed: %v", err)
+	}
+	if len(full) != total {
+		t.Fatalf("final Events() returned %d events, want %d", len(full), total)
+	}
+	for i := 0; i < int(bound); i++ {
+		if bounded[i].Seq != full[i].Seq || string(bounded[i].Payload) != string(full[i].Payload) {
+			t.Fatalf("bounded read diverges from the full read at position %d: (%d, %q) vs (%d, %q)",
+				i, bounded[i].Seq, bounded[i].Payload, full[i].Seq, full[i].Payload)
+		}
+	}
+}
