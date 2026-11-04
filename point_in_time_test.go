@@ -7,6 +7,58 @@ import (
 	"elena"
 )
 
+// A session whose TTL has elapsed reads as if never written, so its
+// point-in-time read is empty at every bound; a perpetual session in
+// the same store keeps reading in full — the elapsed deadline of one
+// session cannot leak into another.
+func TestEventsUpToOnElapsedSessionReadsEmptyWhilePerpetualReads(t *testing.T) {
+	st := openStore(t)
+	const ttl = 300 * time.Millisecond
+	timed := createTimedSession(t, st, "runs", "timed", ttl)
+	for _, p := range []string{"first", "second"} {
+		mustAppend(t, timed, p)
+	}
+	perpetual := createSession(t, st, "runs", "keeper")
+	for _, p := range []string{"kept-1", "kept-2", "kept-3"} {
+		mustAppend(t, perpetual, p)
+	}
+
+	before, err := timed.EventsUpTo(1)
+	if err != nil {
+		t.Fatalf("EventsUpTo(1) before the deadline failed: %v", err)
+	}
+	if len(before) != 1 || before[0].Seq != 1 {
+		t.Fatalf("EventsUpTo(1) before the deadline = %v, want the single event 1", before)
+	}
+
+	waitForTTLElapse(ttl)
+
+	for _, seq := range []uint64{1, 2, 99} {
+		events, err := timed.EventsUpTo(seq)
+		if err != nil {
+			t.Fatalf("EventsUpTo(%d) after the deadline failed: %v", seq, err)
+		}
+		if len(events) != 0 {
+			t.Errorf("EventsUpTo(%d) after the deadline returned %d events, want 0", seq, len(events))
+		}
+	}
+
+	kept, err := perpetual.EventsUpTo(2)
+	if err != nil {
+		t.Fatalf("EventsUpTo(2) of the perpetual session failed: %v", err)
+	}
+	if len(kept) != 2 || kept[0].Seq != 1 || string(kept[1].Payload) != "kept-2" {
+		t.Fatalf("EventsUpTo(2) of the perpetual session = %v, want events 1 and 2", kept)
+	}
+	all, err := perpetual.EventsUpTo(99)
+	if err != nil {
+		t.Fatalf("EventsUpTo(99) of the perpetual session failed: %v", err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("EventsUpTo(99) of the perpetual session returned %d events, want 3", len(all))
+	}
+}
+
 // A point-in-time read must return the trajectory's events up to and
 // including the requested sequence number, in sequence order, with the
 // endpoint event present and self-describing.
