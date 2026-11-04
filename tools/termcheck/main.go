@@ -34,7 +34,7 @@ func run(args []string, stdout io.Writer, listFiles func(root string) ([]string,
 
 	paths, err := listFiles(*root)
 	if err != nil {
-		fmt.Fprintf(stdout, "termcheck: listing tracked files: %v\n", err)
+		_, _ = fmt.Fprintf(stdout, "termcheck: listing tracked files: %v\n", err)
 		return 2
 	}
 
@@ -42,19 +42,19 @@ func run(args []string, stdout io.Writer, listFiles func(root string) ([]string,
 	for _, rel := range paths {
 		content, err := os.ReadFile(filepath.Join(*root, filepath.FromSlash(rel)))
 		if err != nil {
-			fmt.Fprintf(stdout, "termcheck: reading %s: %v\n", rel, err)
+			_, _ = fmt.Fprintf(stdout, "termcheck: reading %s: %v\n", rel, err)
 			return 2
 		}
 		for _, v := range checkFile(File{Path: rel, Content: content}) {
-			fmt.Fprintf(stdout, "%s:%d: %s: %q (%s)\n", v.Path, v.Line, v.Rule, v.Term, v.Fix)
+			_, _ = fmt.Fprintf(stdout, "%s:%d: %s: %q (%s)\n", v.Path, v.Line, v.Rule, v.Term, v.Fix)
 			total++
 		}
 	}
 	if total > 0 {
-		fmt.Fprintf(stdout, "termcheck: %d violation(s); fix the wording or record an exemption\n", total)
+		_, _ = fmt.Fprintf(stdout, "termcheck: %d violation(s); fix the wording or record an exemption\n", total)
 		return 1
 	}
-	fmt.Fprintf(stdout, "termcheck: %d tracked files clean\n", len(paths))
+	_, _ = fmt.Fprintf(stdout, "termcheck: %d tracked files clean\n", len(paths))
 	return 0
 }
 
