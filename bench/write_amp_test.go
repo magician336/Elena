@@ -7,24 +7,24 @@ import (
 	"elena"
 )
 
-// TestWriteAmplificationSnapshotOfMapsStats pins the snapshot's basis:
+// TestWriteAmplificationReadingOfMapsStats pins the reading's basis:
 // the logical/flushed byte pair and their ratio copied off Stats, the
 // store's own write-amplification accounting.
-func TestWriteAmplificationSnapshotOfMapsStats(t *testing.T) {
+func TestWriteAmplificationReadingOfMapsStats(t *testing.T) {
 	stats := elena.Stats{BytesWritten: 1000, BytesFlushed: 2500, WriteAmplification: 2.5}
-	got := WriteAmplificationSnapshotOf(stats)
+	got := WriteAmplificationReadingOf(stats)
 	if got.LogicalBytes != 1000 || got.FlushedBytes != 2500 || got.Ratio != 2.5 {
-		t.Fatalf("snapshot = %+v, want the Stats figures (1000, 2500, 2.5) unchanged", got)
+		t.Fatalf("reading = %+v, want the Stats figures (1000, 2500, 2.5) unchanged", got)
 	}
 }
 
-// TestWriteAmplificationSnapshotOfZeroLogical pins the empty-store
+// TestWriteAmplificationReadingOfZeroLogical pins the empty-store
 // reading: Stats reports ratio 0 while no logical bytes exist, and the
-// snapshot forwards that pair rather than inventing a ratio.
-func TestWriteAmplificationSnapshotOfZeroLogical(t *testing.T) {
-	got := WriteAmplificationSnapshotOf(elena.Stats{})
+// reading forwards that pair rather than inventing a ratio.
+func TestWriteAmplificationReadingOfZeroLogical(t *testing.T) {
+	got := WriteAmplificationReadingOf(elena.Stats{})
 	if got.LogicalBytes != 0 || got.FlushedBytes != 0 || got.Ratio != 0 {
-		t.Fatalf("snapshot of an empty store = %+v, want all zeros", got)
+		t.Fatalf("reading of an empty store = %+v, want all zeros", got)
 	}
 }
 
@@ -39,7 +39,7 @@ func TestRunWriteAmplificationMicro(t *testing.T) {
 		t.Fatalf("RunWriteAmplification: %v", err)
 	}
 	if got.BeforeMerge.LogicalBytes == 0 || got.BeforeMerge.FlushedBytes == 0 {
-		t.Fatalf("before-merge snapshot = %+v, want positive byte counts", got.BeforeMerge)
+		t.Fatalf("before-merge reading = %+v, want positive byte counts", got.BeforeMerge)
 	}
 	if got.AfterMerge.LogicalBytes != got.BeforeMerge.LogicalBytes {
 		t.Fatalf("logical bytes moved across the merge: before %d, after %d, want unchanged",

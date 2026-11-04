@@ -24,11 +24,11 @@ type WriteAmplificationConfig struct {
 	ValueSize        int
 }
 
-// WriteAmplificationSnapshot is one reading of the write-amplification
+// WriteAmplificationReading is one reading of the write-amplification
 // pair: the cumulative logical payload the store accepted, the
 // cumulative encoded bytes it put on disk, and the store's own ratio of
 // the two.
-type WriteAmplificationSnapshot struct {
+type WriteAmplificationReading struct {
 	// LogicalBytes is Stats().BytesWritten.
 	LogicalBytes uint64 `json:"logical_bytes"`
 
@@ -44,14 +44,14 @@ type WriteAmplificationSnapshot struct {
 // itself caused — the rewrite made visible as a number, the declared
 // accounting demonstrated rather than asserted.
 type WriteAmplificationResult struct {
-	BeforeMerge       WriteAmplificationSnapshot `json:"before_merge"`
-	AfterMerge        WriteAmplificationSnapshot `json:"after_merge"`
+	BeforeMerge       WriteAmplificationReading `json:"before_merge"`
+	AfterMerge        WriteAmplificationReading `json:"after_merge"`
 	MergeFlushedBytes uint64                     `json:"merge_flushed_bytes"`
 }
 
-// WriteAmplificationSnapshotOf reads the byte pair off one Stats view.
-func WriteAmplificationSnapshotOf(stats elena.Stats) WriteAmplificationSnapshot {
-	return WriteAmplificationSnapshot{
+// WriteAmplificationReadingOf reads the byte pair off one Stats view.
+func WriteAmplificationReadingOf(stats elena.Stats) WriteAmplificationReading {
+	return WriteAmplificationReading{
 		LogicalBytes: stats.BytesWritten,
 		FlushedBytes: stats.BytesFlushed,
 		Ratio:        stats.WriteAmplification,
@@ -99,11 +99,11 @@ func runWriteAmplification(store *elena.Store, cfg WriteAmplificationConfig) (Wr
 	if err := seedStore(store, cfg.Sessions, cfg.EventsPerSession, cfg.ValueSize); err != nil {
 		return WriteAmplificationResult{}, err
 	}
-	before := WriteAmplificationSnapshotOf(store.Stats())
+	before := WriteAmplificationReadingOf(store.Stats())
 	if err := store.Merge(); err != nil {
 		return WriteAmplificationResult{}, fmt.Errorf("write-amplification scenario: merge: %w", err)
 	}
-	after := WriteAmplificationSnapshotOf(store.Stats())
+	after := WriteAmplificationReadingOf(store.Stats())
 	return WriteAmplificationResult{
 		BeforeMerge:       before,
 		AfterMerge:        after,
