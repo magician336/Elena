@@ -4,23 +4,44 @@
 package elena
 
 import (
+	"fmt"
 	"time"
 
 	"elena/internal/semantic"
 )
 
 // Store is a trajectory store rooted at one directory. All methods are
-// safe for use from multiple goroutines.
+// safe for use from multiple goroutines. Unless disabled at Open, a
+// background sweep reclaims the bytes of elapsed sessions once per
+// DefaultSweepPeriod; see Open and the sweep options.
 type Store struct {
 	store *semantic.Store
 }
 
 // Open opens the store rooted at dir, creating the directory if
-// needed. The store holds an exclusive lock on its directory: while it
-// is open, a second Open of the same directory fails with an error
-// wrapping ErrDirectoryLocked.
-func Open(dir string) (*Store, error) {
-	store, err := semantic.Open(dir)
+// needed, configured by opts. The store holds an exclusive lock on its
+// directory: while it is open, a second Open of the same directory
+// fails with an error wrapping ErrDirectoryLocked.
+//
+// By default a background sweep runs: once per DefaultSweepPeriod it
+// checks the timed sessions' deadlines and, once one has elapsed,
+// triggers the merge that physically reclaims the session's bytes —
+// visibility of an elapsed session is immediate on the read path
+// either way; the sweep governs only how promptly the bytes come back.
+// WithSweepPeriod tunes the period and WithSweepDisabled turns the
+// sweep off entirely.
+func Open(dir string, opts ...OpenOption) (*Store, error) {
+	var o openOptions
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&o)
+		}
+	}
+	cfg, err := o.config()
+	if err != nil {
+		return nil, fmt.Errorf("elena: open %q: %w", dir, err)
+	}
+	store, err := semantic.Open(dir, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -28,10 +49,25 @@ func Open(dir string) (*Store, error) {
 }
 
 // Close closes the store and releases its directory lock. Events
-// acknowledged before Close returns are durable. It is safe to call
-// Close more than once; repeated calls are no-ops.
+// acknowledged before Close returns are durable. The background sweep,
+// if running, is joined first: its goroutine exits before Close
+// returns, and the first sweep failure it hit, if any, is reported
+// here. It is safe to call Close more than once; repeated calls are
+// no-ops.
 func (s *Store) Close() error {
 	return s.store.Close()
+}
+
+// Merge triggers one merge: the store's live entries are rewritten into
+// fresh data files while every expired entry is left out — that omission
+// is the physical reclamation. One Merge reclaims the bytes and index
+// memory of every elapsed session on disk — those the background sweep
+// tracks and any expired residue it never saw, for instance from before
+// the current Open. Visibility never moves: elapsed sessions read as if
+// never written before the merge and still do after it. Operations after
+// Close fail with an error wrapping ErrClosed.
+func (s *Store) Merge() error {
+	return s.store.Merge()
 }
 
 // Session is a handle to one session's trajectory. Handles obtained
@@ -175,6 +211,12 @@ var ErrInvalidLabel = semantic.ErrInvalidLabel
 // when the TTL cannot define a future deadline: zero, negative, or
 // beyond the storable range.
 var ErrInvalidTTL = semantic.ErrInvalidTTL
+
+// ErrInvalidSweepPeriod is wrapped into the error Open returns when
+// WithSweepPeriod is given a period that cannot define a check
+// interval: zero or negative. Turning the sweep off is its own explicit
+// option, WithSweepDisabled, not a period value.
+var ErrInvalidSweepPeriod = semantic.ErrInvalidSweepPeriod
 
 // ErrSessionExists is wrapped into the error the create calls return
 // when the named session already exists with a different lifecycle

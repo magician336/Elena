@@ -196,6 +196,15 @@ func (s *Store) createSession(namespace, session string, form lifecycleForm) (*S
 		return nil, err
 	}
 	s.trajectories[key] = traj
+	if traj.timed() {
+		// A timed session enters the sweep's deadline view: this store
+		// now owes a merge once the deadline elapses. A re-created name
+		// overwrites whatever deadline the view held for it; a perpetual
+		// session never enters, and attaching one leaves any elapsed
+		// entry in place — the signal that expired bytes are due a
+		// reclaim.
+		s.deadlines[key] = traj.deadline
+	}
 	return &Session{store: s, key: key}, nil
 }
 
