@@ -7,11 +7,18 @@
 GO ?= go
 GOLANGCI_LINT ?= golangci-lint
 
-.PHONY: lint test race cov layering bench-test bench-cov bench-smoke
+.PHONY: lint test race cov layering terms bench-test bench-cov bench-smoke
 
 # lint runs the standard golangci-lint linter set.
 lint:
 	$(GOLANGCI_LINT) run
+
+# terms checks wording consistency over the files Git tracks:
+# project terminology follows GLOSSARY.md and no file carries
+# code-generation attribution trailers. The guard's own tests run
+# under `make test`.
+terms:
+	$(GO) run ./tools/termcheck
 
 # layering asserts the import direction of the layered architecture
 # with go list:

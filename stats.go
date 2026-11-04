@@ -19,7 +19,7 @@ type FileStats struct {
 	Active bool
 }
 
-// Stats is a point-in-time snapshot of the store's disk observables —
+// Stats is a point-in-time view of the store's disk observables —
 // the storage engine's existing observables, forwarded unchanged: the
 // library defines no metrics of its own. The dead-data view is
 // byte-based, matching what a merge can actually reclaim, and the two
@@ -82,7 +82,7 @@ type Stats struct {
 	Files []FileStats
 }
 
-// Stats returns a point-in-time snapshot of the store's observables.
+// Stats returns a point-in-time view of the store's observables.
 // The figures are the storage engine's own, forwarded one-to-one —
 // reading Stats observes the store, it never changes it.
 func (s *Store) Stats() Stats {

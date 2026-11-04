@@ -41,6 +41,17 @@ jobs:
           echo "Total coverage: ${total}%"
           awk -v c="$total" 'BEGIN { if (c < 80) { printf "coverage %.1f%% is below the 80%% gate\n", c; exit 1 } }'
 
+  terms:
+    name: Terminology consistency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+      - name: Check wording of tracked files
+        run: make terms
+
   bench:
     name: Bench module (race tests + micro smoke)
     runs-on: ubuntu-latest

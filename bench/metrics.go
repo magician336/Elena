@@ -48,7 +48,7 @@ func (l *Latency) Samples() []time.Duration {
 	return out
 }
 
-// LatencySummary is an immutable snapshot of a Latency collector: the
+// LatencySummary is an immutable summary of a Latency collector: the
 // per-phase numbers reports print and later percentile work derives
 // from, alongside the raw samples.
 type LatencySummary struct {

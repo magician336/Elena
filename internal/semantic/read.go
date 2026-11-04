@@ -28,8 +28,9 @@ type Event struct {
 	Payload []byte
 }
 
-// Events returns the whole trajectory in sequence order. The read is a
-// snapshot: events appended after it starts are not included.
+// Events returns the whole trajectory in sequence order. The read
+// observes one instant: events appended after it starts are not
+// included.
 func (sess *Session) Events() ([]Event, error) {
 	return scanEvents(sess.store.eng, sess.key, nil)
 }
@@ -37,10 +38,10 @@ func (sess *Session) Events() ([]Event, error) {
 // EventsUpTo returns every event of the trajectory with a sequence
 // number of at most seq, in sequence order — the endpoint event included.
 // A seq below the trajectory's first sequence number reads empty; a seq
-// beyond the stored tail reads the whole trajectory. The read is a
-// snapshot like the full one: it returns the events visible when it
-// starts, so appends that race with it are not included even when their
-// sequence numbers fall under seq.
+// beyond the stored tail reads the whole trajectory. The read
+// observes one instant like the full one: it returns the events
+// visible when it starts, so appends that race with it are not
+// included even when their sequence numbers fall under seq.
 func (sess *Session) EventsUpTo(seq uint64) ([]Event, error) {
 	return scanEvents(sess.store.eng, sess.key, eventKey(sess.key.namespace, sess.key.session, seq))
 }
