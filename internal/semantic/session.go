@@ -30,6 +30,11 @@ const (
 // the session ID is empty or exceeds the documented label limit.
 var ErrInvalidLabel = errors.New("elena: namespace and session ID must be non-empty and at most 480 bytes each")
 
+// ErrInvalidTTL is returned by CreateSessionWithTTL when the TTL cannot
+// define a future deadline: zero, negative, or beyond the storable
+// range.
+var ErrInvalidTTL = errors.New("elena: session ttl must be positive and storable")
+
 var (
 	errMalformedMetadata = errors.New("elena: malformed session metadata")
 	errDetachedSession   = errors.New("elena: session handle detached from its store")
@@ -120,6 +125,9 @@ func (s *Store) createSession(namespace, session string, form lifecycleForm) (*S
 	if err := validateLabels(key); err != nil {
 		return nil, fmt.Errorf("elena: create session %q: %w", key.display(), err)
 	}
+	if form.timed && form.ttl <= 0 {
+		return nil, fmt.Errorf("elena: create session %q: ttl %d: %w", key.display(), form.ttl, ErrInvalidTTL)
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -162,7 +170,7 @@ func (s *Store) attachTrajectory(key trajKey, form lifecycleForm) (*trajectory, 
 			deadline = time.Now().Add(form.ttl)
 			metaValue = encodeTimedMetadata(deadline)
 		}
-		if err := s.putEntry("create session", meta, metaValue, deadline); err != nil {
+		if err := s.putEntry("create session", meta, metaValue, deadline, ErrInvalidTTL); err != nil {
 			return nil, err
 		}
 	default:
@@ -179,8 +187,10 @@ func (s *Store) attachTrajectory(key trajKey, form lifecycleForm) (*trajectory, 
 // putEntry writes one entry of a session: perpetually live when the
 // deadline is the zero time, or carrying the session's deadline through
 // the engine's TTL primitive, so a timed session and its events turn
-// invisible together. The caller holds s.mu.
-func (st *Store) putEntry(op string, key, value []byte, deadline time.Time) error {
+// invisible together. A TTL the engine rejects maps to ttlErr, so
+// engine vocabulary never leaks through the semantic layer. The caller
+// holds s.mu.
+func (st *Store) putEntry(op string, key, value []byte, deadline time.Time, ttlErr error) error {
 	if deadline.IsZero() {
 		if err := st.eng.Put(key, value); err != nil {
 			return opErr(op, err)
@@ -188,6 +198,9 @@ func (st *Store) putEntry(op string, key, value []byte, deadline time.Time) erro
 		return nil
 	}
 	if err := st.eng.PutWithTTL(key, value, time.Until(deadline)); err != nil {
+		if errors.Is(err, engine.ErrInvalidTTL) {
+			return fmt.Errorf("elena: %s: %w", op, ttlErr)
+		}
 		return opErr(op, err)
 	}
 	return nil
@@ -245,7 +258,7 @@ func (sess *Session) Append(payload []byte) (uint64, error) {
 	seq := traj.lastSeq + 1
 	key := eventKey(sess.key.namespace, sess.key.session, seq)
 	value := encodeEnvelope(seq, time.Now(), payload)
-	if err := st.putEntry("append event", key, value, traj.deadline); err != nil {
+	if err := st.putEntry("append event", key, value, traj.deadline, ErrInvalidTTL); err != nil {
 		return 0, err
 	}
 	traj.lastSeq = seq

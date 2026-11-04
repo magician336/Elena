@@ -60,7 +60,9 @@ func (s *Store) CreateSession(namespace, session string) (*Session, error) {
 // trajectory share one deadline: once the TTL has elapsed, the whole
 // session — events included — reads as if never written, in listings,
 // full reads, and single-event reads alike. The verdict travels with
-// the stored entries, so it survives Close and Open.
+// the stored entries, so it survives Close and Open. The ttl must be
+// positive and its deadline storable (an error wrapping ErrInvalidTTL
+// otherwise).
 func (s *Store) CreateSessionWithTTL(namespace, session string, ttl time.Duration) (*Session, error) {
 	inner, err := s.store.CreateSessionWithTTL(namespace, session, ttl)
 	if err != nil {
@@ -130,6 +132,11 @@ var ErrEventNotFound = semantic.ErrEventNotFound
 // ErrInvalidLabel is wrapped into the error CreateSession returns when
 // the namespace or the session ID is empty or too long.
 var ErrInvalidLabel = semantic.ErrInvalidLabel
+
+// ErrInvalidTTL is wrapped into the error CreateSessionWithTTL returns
+// when the TTL cannot define a future deadline: zero, negative, or
+// beyond the storable range.
+var ErrInvalidTTL = semantic.ErrInvalidTTL
 
 // ErrClosed is wrapped into the errors of operations attempted after
 // Close.

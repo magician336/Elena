@@ -2,6 +2,7 @@ package elena_test
 
 import (
 	"errors"
+	"math"
 	"testing"
 	"time"
 
@@ -23,6 +24,33 @@ func createTimedSession(t *testing.T, st *elena.Store, namespace, session string
 // every entry of a session created with it is past its deadline.
 func waitForTTLElapse(ttl time.Duration) {
 	time.Sleep(ttl + 600*time.Millisecond)
+}
+
+// CreateSessionWithTTL must reject TTLs that cannot define a future
+// deadline — zero, negative, or beyond the storable range — with
+// ErrInvalidTTL, and leave no session behind.
+func TestCreateSessionWithTTLRejectsInvalidTTL(t *testing.T) {
+	st := openStore(t)
+
+	for _, ttl := range []time.Duration{0, -time.Second, time.Duration(math.MaxInt64)} {
+		if _, err := st.CreateSessionWithTTL("runs", "alpha", ttl); !errors.Is(err, elena.ErrInvalidTTL) {
+			t.Errorf("CreateSessionWithTTL(ttl = %v) err = %v, want ErrInvalidTTL", ttl, err)
+		}
+	}
+}
+
+// A session rejected for an invalid TTL must not exist afterwards: the
+// name stays free for a well-formed create.
+func TestCreateSessionWithTTLRejectsInvalidTTLLeavesNoSession(t *testing.T) {
+	st := openStore(t)
+
+	if _, err := st.CreateSessionWithTTL("runs", "alpha", 0); !errors.Is(err, elena.ErrInvalidTTL) {
+		t.Fatalf("CreateSessionWithTTL(ttl = 0) err = %v, want ErrInvalidTTL", err)
+	}
+	sess := createSession(t, st, "runs", "alpha")
+	if seq, err := sess.Append([]byte("event")); err != nil || seq != 1 {
+		t.Fatalf("Append() after rejected create = (%d, %v), want (1, nil)", seq, err)
+	}
 }
 
 // A session created with a TTL shares one deadline between its metadata
