@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, engine-core]
+    branches: [main, engine-core, semantic-layer]
   pull_request:
 
 permissions:
@@ -30,6 +30,8 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.27'
+      - name: Layering guard
+        run: make layering
       - name: Run tests with race detector and coverage
         run: make cov
       - name: Enforce coverage gate (>= 80%)
