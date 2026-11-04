@@ -24,9 +24,11 @@ type CheckpointInfo struct {
 // CreateCheckpoint records a manifest of the whole store as one
 // checkpoint: for every live session, the trajectory's reached sequence
 // number and the session's deadline, plus the checkpoint's creation
-// time. The manifest lands durably in a single engine batch — one
-// append, one fdatasync — and is ordinary stored data: it can be listed
-// and restored across Close and Open. It returns the checkpoint's ID.
+// time. The manifest lands in a single engine batch — one append, made
+// durable by one fdatasync under the default sync policy (the other
+// tiers trade that away; see the sync options) — and is ordinary
+// stored data: it can be listed and restored across Close and Open. It
+// returns the checkpoint's ID.
 func (s *Store) CreateCheckpoint() (uint64, error) {
 	return s.store.CreateCheckpoint()
 }
@@ -129,12 +131,13 @@ func (s *Store) Restore(id uint64) error {
 
 // Batch accumulates appends and a checkpoint for one atomic commit: on
 // Commit, everything the batch carries — the whole group of events and
-// the baseline — is written as a single durable unit, one append and
-// one fdatasync, so it either survives as a whole or is not visible at
-// all. There is never a half group of events and never a half
-// checkpoint. A Batch is not safe for concurrent use by multiple
-// goroutines: it is its author's accumulation buffer. Create a fresh
-// batch for each group.
+// the baseline — is written as a single unit, one append and one
+// fdatasync under the default sync policy (the other tiers trade the
+// fdatasync away; see the sync options), so it either survives as a
+// whole or is not visible at all. There is never a half group of
+// events and never a half checkpoint. A Batch is not safe for
+// concurrent use by multiple goroutines: it is its author's
+// accumulation buffer. Create a fresh batch for each group.
 type Batch struct {
 	batch *semantic.Batch
 }
@@ -145,9 +148,10 @@ func (s *Store) NewBatch() *Batch {
 }
 
 // Append stages payload as the session's next event. Staged events
-// become durable and visible only when the batch commits; until then
-// they occupy no sequence number, so an abandoned or failed batch
-// leaves no hole in any trajectory. The payload is copied and treated
+// become visible only when the batch commits — durable with it under
+// the default sync policy — and until then occupy no sequence number,
+// so an abandoned or failed batch leaves no hole in any trajectory.
+// The payload is copied and treated
 // as opaque bytes. Staging fails when the handle belongs to another
 // store or the session's TTL has elapsed (an error wrapping
 // ErrSessionEnded).
@@ -158,17 +162,18 @@ func (b *Batch) Append(sess *Session, payload []byte) error {
 // Checkpoint stages a checkpoint of the whole store into this batch.
 // The manifest is written at Commit, after the batch's own events have
 // been given their sequence numbers, so it records them: the group of
-// events and its baseline become durable together.
+// events and its baseline commit together.
 func (b *Batch) Checkpoint() {
 	b.batch.Checkpoint()
 }
 
-// Commit makes everything the batch holds durable in one atomic write.
-// It allocates the staged events' sequence numbers in staging order and
+// Commit makes everything the batch holds visible in one atomic write
+// — durable with it under the default sync policy. It allocates the
+// staged events' sequence numbers in staging order and
 // returns them; when a checkpoint was staged it also returns the
 // checkpoint's ID, and 0 otherwise. Sequence numbers are allocated, and
-// the trajectories' counters advance, only after the whole batch is
-// durable, so a failed commit leaves no hole behind. A commit fails
+// the trajectories' counters advance, only after the whole batch has
+// committed, so a failed commit leaves no hole behind. A commit fails
 // whole — with an error wrapping ErrSessionEnded when a staged session's
 // TTL has elapsed by commit time, ErrClosed after Close, or an error
 // for a payload beyond the storable size — and then nothing the batch

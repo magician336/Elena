@@ -425,11 +425,12 @@ type batchAppend struct {
 
 // Batch accumulates appends and a checkpoint for one atomic commit:
 // everything a batch carries — the whole group of events and the
-// baseline — lands in one engine batch, one append and one fdatasync,
-// so it either survives as a whole or is not visible at all. There is
-// never a half checkpoint and never a half group of events. A Batch is
-// not safe for concurrent use by multiple goroutines: it is its
-// author's accumulation buffer.
+// baseline — lands in one engine batch, one append and one fdatasync
+// under the default sync policy (the other tiers trade the fdatasync
+// away; see Config.SyncPolicy), so it either survives as a whole or is
+// not visible at all. There is never a half checkpoint and never a
+// half group of events. A Batch is not safe for concurrent use by
+// multiple goroutines: it is its author's accumulation buffer.
 type Batch struct {
 	store            *Store
 	appends          []batchAppend
@@ -442,9 +443,9 @@ func (s *Store) NewBatch() *Batch {
 }
 
 // Append stages payload as the session's next event. Staged events
-// become durable and visible only when the batch commits; until then
-// they occupy no sequence number, so an abandoned or failed batch
-// leaves no hole in any trajectory. The payload is copied and treated
+// become visible only when the batch commits — durable with it under
+// the default sync policy — and until then occupy no sequence number,
+// so an abandoned or failed batch leaves no hole in any trajectory. The payload is copied and treated
 // as opaque bytes. Staging fails when the handle belongs to another
 // store or the session's TTL has elapsed (an error wrapping
 // ErrSessionEnded).
@@ -473,17 +474,18 @@ func (b *Batch) Append(sess *Session, payload []byte) error {
 // Checkpoint stages a checkpoint of the whole store into this batch.
 // The manifest is written at Commit, after the batch's own events have
 // been given their sequence numbers, so it records them: the group and
-// its baseline become durable together.
+// its baseline commit together.
 func (b *Batch) Checkpoint() {
 	b.checkpointWanted = true
 }
 
-// Commit turns everything the batch holds into one durable, atomic
-// write. It allocates the staged events' sequence numbers in staging
-// order and returns them; when a checkpoint was staged it also returns
+// Commit turns everything the batch holds into one atomic write —
+// durable with it under the default sync policy. It allocates the
+// staged events' sequence numbers in staging order and returns them;
+// when a checkpoint was staged it also returns
 // the checkpoint's ID, and 0 otherwise. Sequence numbers are allocated
-// and the runtime counters advance only after the whole batch is
-// durable, so a failed commit leaves no hole behind. A commit fails
+// and the runtime counters advance only after the whole batch has
+// committed, so a failed commit leaves no hole behind. A commit fails
 // whole — with an error wrapping ErrSessionEnded when a staged session's
 // TTL has elapsed by commit time, ErrClosed after Close, or an error
 // for a payload beyond the storable size — and then nothing the batch
