@@ -33,8 +33,16 @@ const (
 	// keyKindEvent marks one trajectory event.
 	keyKindEvent byte = 0x01
 
+	// keyAreaCheckpoint marks one checkpoint manifest. It extends the
+	// key space with a second record class; the session class above is
+	// untouched.
+	keyAreaCheckpoint byte = 0x02
+
 	// sequenceWidth is the fixed width of the encoded sequence number.
 	sequenceWidth = 8
+
+	// checkpointIDWidth is the fixed width of the encoded checkpoint ID.
+	checkpointIDWidth = 8
 )
 
 // maxLabelBytes bounds the namespace and the session ID individually.
@@ -101,6 +109,27 @@ func namespacePrefix(namespace string) []byte {
 	prefix = append(prefix, keyAreaSession)
 	prefix = appendLabel(prefix, namespace)
 	return prefix
+}
+
+// checkpointKey returns the key of one checkpoint manifest: the
+// checkpoint area byte followed by the fixed-width big-endian checkpoint
+// ID. The fixed-width big-endian encoding keeps byte order equal ID
+// order equal creation order, so a scan of the checkpoint area lists
+// checkpoints in the order they were created.
+func checkpointKey(id uint64) []byte {
+	key := make([]byte, 1+checkpointIDWidth)
+	key[0] = keyAreaCheckpoint
+	binary.BigEndian.PutUint64(key[1:], id)
+	return key
+}
+
+// checkpointIDFromKey decodes the ID out of a checkpoint-area key,
+// reporting whether the key is well-formed.
+func checkpointIDFromKey(key []byte) (uint64, bool) {
+	if len(key) != 1+checkpointIDWidth || key[0] != keyAreaCheckpoint {
+		return 0, false
+	}
+	return binary.BigEndian.Uint64(key[1:]), true
 }
 
 // parseSessionKey splits a session-area key into its namespace, session
