@@ -54,6 +54,21 @@ func (s *Store) CreateSession(namespace, session string) (*Session, error) {
 	return &Session{session: inner}, nil
 }
 
+// CreateSessionWithTTL creates the session named session in namespace
+// with a time-to-live and returns a handle for appending to and reading
+// its trajectory. The session's metadata entry and every event of its
+// trajectory share one deadline: once the TTL has elapsed, the whole
+// session — events included — reads as if never written, in listings,
+// full reads, and single-event reads alike. The verdict travels with
+// the stored entries, so it survives Close and Open.
+func (s *Store) CreateSessionWithTTL(namespace, session string, ttl time.Duration) (*Session, error) {
+	inner, err := s.store.CreateSessionWithTTL(namespace, session, ttl)
+	if err != nil {
+		return nil, err
+	}
+	return &Session{session: inner}, nil
+}
+
 // Append appends payload to the trajectory as its next event and
 // returns the event's sequence number, starting at 1. The payload is
 // copied and treated as opaque bytes; an acknowledged append is durable

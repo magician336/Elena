@@ -1,6 +1,7 @@
 package semantic
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"math"
@@ -10,12 +11,19 @@ import (
 )
 
 // The session metadata entry: a version byte plus a lifecycle form
-// byte. This ticket's only form is the perpetual session; timed forms
-// are a later extension that will append their deadline after the form
-// byte, extending the layout without breaking it.
+// byte. The perpetual form is those two bytes alone; the timed form
+// appends the session deadline — Unix nanoseconds, big-endian — after
+// the form byte, extending the layout without breaking it. A timed
+// session's metadata entry and every event of its trajectory carry one
+// and the same deadline, so the session turns invisible as a whole.
 const (
 	metadataVersion       byte = 0x01
 	metadataFormPerpetual byte = 0x00
+	metadataFormTimed     byte = 0x01
+
+	// metadataTimedSize is the byte size of a timed metadata entry:
+	// version, form, deadline.
+	metadataTimedSize = 2 + 8
 )
 
 // ErrInvalidLabel is returned by CreateSession when the namespace or
@@ -28,6 +36,22 @@ var (
 	errSequenceExhausted = errors.New("elena: trajectory sequence numbers exhausted")
 	errPayloadTooLarge   = errors.New("elena: payload exceeds the storable size")
 )
+
+// encodePerpetualMetadata returns the metadata entry of a perpetual
+// session: version and form byte, nothing more.
+func encodePerpetualMetadata() []byte {
+	return []byte{metadataVersion, metadataFormPerpetual}
+}
+
+// encodeTimedMetadata returns the metadata entry of a session whose
+// deadline is deadline.
+func encodeTimedMetadata(deadline time.Time) []byte {
+	value := make([]byte, metadataTimedSize)
+	value[0] = metadataVersion
+	value[1] = metadataFormTimed
+	binary.BigEndian.PutUint64(value[2:], uint64(deadline.UnixNano()))
+	return value
+}
 
 // trajKey identifies one trajectory: the namespace and session ID the
 // caller named at creation time.
@@ -42,10 +66,23 @@ func (k trajKey) display() string {
 }
 
 // trajectory is the runtime state of one trajectory: the last sequence
-// number handed out. It is guarded by Store.mu and rebuilt from the
-// stored trajectory whenever a session is attached to a fresh Store.
+// number handed out and, for a timed session, the deadline every entry
+// of the session shares — the zero time marks a perpetual session. It
+// is guarded by Store.mu and rebuilt from the stored trajectory
+// whenever a session is attached to a fresh Store.
 type trajectory struct {
-	lastSeq uint64
+	lastSeq  uint64
+	deadline time.Time
+}
+
+// lifecycleForm is the lifecycle a create call asks the session to have.
+type lifecycleForm struct {
+	// timed distinguishes the TTL form from the perpetual form.
+	timed bool
+
+	// ttl is the requested time-to-live, consulted only when the
+	// session is first created. Valid when timed is set.
+	ttl time.Duration
 }
 
 // Session is a handle to one session's trajectory. Handles obtained
@@ -62,6 +99,23 @@ type Session struct {
 // continues the stored trajectory: its sequence numbers continue from
 // the last stored event, across Close and Open.
 func (s *Store) CreateSession(namespace, session string) (*Session, error) {
+	return s.createSession(namespace, session, lifecycleForm{})
+}
+
+// CreateSessionWithTTL creates the session named session in namespace
+// with a time-to-live and returns a handle for appending to and reading
+// its trajectory. The session's metadata entry and every event of its
+// trajectory share one deadline: once the TTL has elapsed, the whole
+// session — events included — reads as if never written, and the verdict
+// travels with the stored entries, so it survives Close and Open.
+func (s *Store) CreateSessionWithTTL(namespace, session string, ttl time.Duration) (*Session, error) {
+	return s.createSession(namespace, session, lifecycleForm{timed: true, ttl: ttl})
+}
+
+// createSession validates the labels, brings the named session into
+// this store's runtime under the requested lifecycle form, and returns a
+// handle. The caller-visible semantics live on the public wrappers.
+func (s *Store) createSession(namespace, session string, form lifecycleForm) (*Session, error) {
 	key := trajKey{namespace: namespace, session: session}
 	if err := validateLabels(key); err != nil {
 		return nil, fmt.Errorf("elena: create session %q: %w", key.display(), err)
@@ -71,7 +125,7 @@ func (s *Store) CreateSession(namespace, session string) (*Session, error) {
 	defer s.mu.Unlock()
 
 	if _, ok := s.trajectories[key]; !ok {
-		traj, err := s.attachTrajectory(key)
+		traj, err := s.attachTrajectory(key, form)
 		if err != nil {
 			return nil, err
 		}
@@ -90,10 +144,12 @@ func validateLabels(key trajKey) error {
 }
 
 // attachTrajectory brings a trajectory into this store's runtime: it
-// ensures the session's metadata entry exists on disk and rebuilds the
-// sequence counter from the stored trajectory. The caller holds s.mu.
-func (s *Store) attachTrajectory(key trajKey) (*trajectory, error) {
+// ensures the session's metadata entry exists on disk under the
+// requested lifecycle form and rebuilds the sequence counter from the
+// stored trajectory. The caller holds s.mu.
+func (s *Store) attachTrajectory(key trajKey, form lifecycleForm) (*trajectory, error) {
 	meta := metadataKey(key.namespace, key.session)
+	var deadline time.Time
 	value, err := s.eng.Get(meta)
 	switch {
 	case err == nil:
@@ -101,8 +157,13 @@ func (s *Store) attachTrajectory(key trajKey) (*trajectory, error) {
 			return nil, fmt.Errorf("elena: attach session %q: %w", key.display(), errMalformedMetadata)
 		}
 	case errors.Is(err, engine.ErrNotFound):
-		if err := s.eng.Put(meta, []byte{metadataVersion, metadataFormPerpetual}); err != nil {
-			return nil, opErr("create session", err)
+		metaValue := encodePerpetualMetadata()
+		if form.timed {
+			deadline = time.Now().Add(form.ttl)
+			metaValue = encodeTimedMetadata(deadline)
+		}
+		if err := s.putEntry("create session", meta, metaValue, deadline); err != nil {
+			return nil, err
 		}
 	default:
 		return nil, opErr("create session", err)
@@ -112,7 +173,24 @@ func (s *Store) attachTrajectory(key trajKey) (*trajectory, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &trajectory{lastSeq: last}, nil
+	return &trajectory{lastSeq: last, deadline: deadline}, nil
+}
+
+// putEntry writes one entry of a session: perpetually live when the
+// deadline is the zero time, or carrying the session's deadline through
+// the engine's TTL primitive, so a timed session and its events turn
+// invisible together. The caller holds s.mu.
+func (st *Store) putEntry(op string, key, value []byte, deadline time.Time) error {
+	if deadline.IsZero() {
+		if err := st.eng.Put(key, value); err != nil {
+			return opErr(op, err)
+		}
+		return nil
+	}
+	if err := st.eng.PutWithTTL(key, value, time.Until(deadline)); err != nil {
+		return opErr(op, err)
+	}
+	return nil
 }
 
 // lastSequence rebuilds the trajectory's sequence counter by scanning
@@ -167,8 +245,8 @@ func (sess *Session) Append(payload []byte) (uint64, error) {
 	seq := traj.lastSeq + 1
 	key := eventKey(sess.key.namespace, sess.key.session, seq)
 	value := encodeEnvelope(seq, time.Now(), payload)
-	if err := st.eng.Put(key, value); err != nil {
-		return 0, opErr("append event", err)
+	if err := st.putEntry("append event", key, value, traj.deadline); err != nil {
+		return 0, err
 	}
 	traj.lastSeq = seq
 	return seq, nil
