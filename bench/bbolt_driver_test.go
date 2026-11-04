@@ -27,7 +27,7 @@ func TestForReturnsBboltDriver(t *testing.T) {
 // TestForUnknownDriverFails pins the registry boundary: an unknown
 // name is an error, never a silent default.
 func TestForUnknownDriverFails(t *testing.T) {
-	for _, name := range []string{"", "rosedb", "elena "} {
+	for _, name := range []string{"", "pebble", "elena "} {
 		if _, err := For(name); err == nil {
 			t.Fatalf("For(%q) succeeded, want error", name)
 		}

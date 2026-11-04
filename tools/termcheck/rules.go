@@ -136,8 +136,11 @@ var attributionRules = []rule{
 // excludedPaths are skipped entirely, path included. GLOSSARY.md is the
 // definition source of every rule above and must show the avoided
 // words; the checker's own table and fixtures reference them by
-// necessity.
-var excludedPaths = []string{"GLOSSARY.md", "tools/termcheck/"}
+// necessity. bench/go.mod is a machine-maintained dependency manifest:
+// a transitive module path such as go.opentelemetry.io/otel/trace says
+// its package is being imported, not that this project calls a
+// trajectory a trace.
+var excludedPaths = []string{"GLOSSARY.md", "tools/termcheck/", "bench/go.mod"}
 
 // profile selects which matchers a file gets.
 type profile struct {
