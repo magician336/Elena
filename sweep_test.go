@@ -14,7 +14,7 @@ import (
 // condition never holds within a generous deadline. The background sweep
 // acts asynchronously — a deadline elapses, the next period's check
 // notices, the merge runs — so reclamation is observed by polling the
-// same port the contrast assertions of the TTL ticket use: facade Stats.
+// same port the contrast assertions of the TTL tests use: facade Stats.
 func waitForStats(t *testing.T, st *elena.Store, what string, cond func(elena.Stats) bool) elena.Stats {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
@@ -31,7 +31,7 @@ func waitForStats(t *testing.T, st *elena.Store, what string, cond func(elena.St
 }
 
 // A merge must physically reclaim the bytes of an elapsed session: the
-// TTL ticket held that DataBytes, LiveBytes, and the entry counts stand
+// TTL tests held that DataBytes, LiveBytes, and the entry counts stand
 // exactly where they stood when the deadline passed — this test is that
 // contrast assertion's other half. One Merge later, the whole session —
 // metadata and events — is gone from the byte and index figures, and
@@ -90,7 +90,7 @@ func TestMergeReclaimsElapsedSessionBytes(t *testing.T) {
 // With a configured sweep period, an elapsed session is reclaimed with
 // no manual call at all: the sweep notices the deadline on its next
 // check and the merge it triggers returns the bytes — the contrast
-// assertion of the TTL ticket reversed through the background path this
+// assertion of the TTL tests reversed through the background path this
 // time. Further checks after the reclaim are no-ops — the sweep is
 // idempotent, exactly one merge runs — and visibility was gone the
 // moment the deadline passed, not when the sweep acted.

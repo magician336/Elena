@@ -273,14 +273,14 @@ func (s *Store) attachTrajectory(key trajKey, form lifecycleForm) (*trajectory, 
 // invisible together. A TTL the engine rejects maps to ttlErr, so
 // engine vocabulary never leaks through the semantic layer. The caller
 // holds s.mu.
-func (st *Store) putEntry(op string, key, value []byte, deadline time.Time, ttlErr error) error {
+func (s *Store) putEntry(op string, key, value []byte, deadline time.Time, ttlErr error) error {
 	if deadline.IsZero() {
-		if err := st.eng.Put(key, value); err != nil {
+		if err := s.eng.Put(key, value); err != nil {
 			return opErr(op, err)
 		}
 		return nil
 	}
-	if err := st.eng.PutWithTTL(key, value, time.Until(deadline)); err != nil {
+	if err := s.eng.PutWithTTL(key, value, time.Until(deadline)); err != nil {
 		if errors.Is(err, engine.ErrInvalidTTL) {
 			return fmt.Errorf("elena: %s: %w", op, ttlErr)
 		}
