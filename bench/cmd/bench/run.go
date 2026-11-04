@@ -29,13 +29,13 @@ const usageText = `usage: bench [arguments]
 drives one engine through a micro workload: a timed append phase, then a timed read phase
 
 arguments:
-  --driver elena|bbolt   engine to drive (required)
+  --driver elena|bbolt|badger|rosedb   engine to drive (required)
   --ops N                operations per phase (default 200)
   --value-size B         bytes per appended value (default 1024)
   --dir PATH             fresh directory for this run (required, must not exist)
 
 output: per phase — operation count, wall time, throughput in ops/sec, and latency min/max/mean
-durability: every append is synchronized on acknowledgment; both drivers ride the same regime
+durability: every append is synchronized on acknowledgment; every driver rides the same regime
 `
 
 // usageError marks argument problems: Run prints the message and exits
@@ -80,7 +80,7 @@ func parse(args []string) (config, error) {
 	fs := flag.NewFlagSet("bench", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	cfg := config{}
-	fs.StringVar(&cfg.driver, "driver", "", "engine to drive: elena or bbolt")
+	fs.StringVar(&cfg.driver, "driver", "", "engine to drive: elena, bbolt, badger, or rosedb")
 	fs.IntVar(&cfg.ops, "ops", defaultOps, "operations per phase")
 	fs.IntVar(&cfg.valueSize, "value-size", defaultValueSize, "bytes per appended value")
 	fs.StringVar(&cfg.dir, "dir", "", "fresh directory for this run")

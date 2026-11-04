@@ -294,6 +294,10 @@ func TestExcludedPathsAreSkippedEntirely(t *testing.T) {
 	if got := checkFile(File{Path: "tools/termcheck/rules.go", Content: []byte(self)}); len(got) != 0 {
 		t.Errorf("checker self violations = %v, want none", got)
 	}
+	manifest := "\tgo.opentelemetry.io/otel/trace v1.41.0 // indirect\n"
+	if got := checkFile(File{Path: "bench/go.mod", Content: []byte(manifest)}); len(got) != 0 {
+		t.Errorf("bench/go.mod violations = %v, want none", got)
+	}
 }
 
 func TestNonTextFilesGetPathCheckOnly(t *testing.T) {

@@ -3,6 +3,7 @@ package bench
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"elena"
 )
@@ -50,6 +51,29 @@ func TestElenaDriverAppendReadRoundtrip(t *testing.T) {
 		if err := drv.Do(Op{Kind: OpRead, Key: key}); err != nil {
 			t.Fatalf("read key %d: %v", key, err)
 		}
+	}
+}
+
+// TestElenaDriverGroupCommitRoundtrip pins the group-commit tier's
+// lifecycle: a driver built by ForTier opens its store under
+// WithSyncInterval, appends, reads back, and closes cleanly — the same
+// observable behavior as the per-write tier, one durability regime
+// below.
+func TestElenaDriverGroupCommitRoundtrip(t *testing.T) {
+	drv, err := ForTier("elena", SyncGroupCommit, 10*time.Millisecond)
+	if err != nil {
+		t.Fatalf("ForTier(elena, SyncGroupCommit): %v", err)
+	}
+	if err := drv.Open(t.TempDir()); err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = drv.Close() }()
+
+	if err := drv.Do(Op{Kind: OpAppend, Key: 0, Value: []byte("v")}); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	if err := drv.Do(Op{Kind: OpRead, Key: 0}); err != nil {
+		t.Fatalf("read: %v", err)
 	}
 }
 

@@ -2,6 +2,7 @@ package bench
 
 import (
 	"fmt"
+	"time"
 
 	"elena"
 )
@@ -25,14 +26,17 @@ type lastEvent struct {
 // Mapping, the report's declared correspondence: one logical key is one
 // session's trajectory (namespace "bench", session "traj-<key>"); an
 // append is the trajectory's next event; a read is the single-event
-// read of the trajectory's latest acknowledged event. Appends ride the
-// store's default durability regime — every write synchronized on
-// acknowledgment — so a completed operation is durable the moment Do
-// returns.
+// read of the trajectory's latest acknowledged event. Durability runs
+// at the tier the driver was built with: the per-write tier rides the
+// store's default — every write synchronized on acknowledgment — and
+// the group-commit tier opens with WithSyncInterval, whose background
+// flusher synchronizes once per the declared period.
 type elenaDriver struct {
-	store    *elena.Store
-	sessions map[uint64]*elena.Session
-	latest   map[uint64]lastEvent // key → its latest acknowledged event
+	store      *elena.Store
+	sessions   map[uint64]*elena.Session
+	latest     map[uint64]lastEvent // key → its latest acknowledged event
+	syncTier   SyncTier             // zero value SyncPerWrite = the store's default every-write sync
+	syncPeriod time.Duration        // group-commit period; read only when syncTier is SyncGroupCommit
 }
 
 // Name identifies the driver in reports.
@@ -40,8 +44,13 @@ func (d *elenaDriver) Name() string { return "elena" }
 
 // Open opens a fresh store under dir with the background sweep off: no
 // timed window of this harness includes background reclamation work.
+// The sync tier selects the store's durability regime.
 func (d *elenaDriver) Open(dir string) error {
-	store, err := elena.Open(dir, elena.WithSweepDisabled())
+	opts := []elena.OpenOption{elena.WithSweepDisabled()}
+	if d.syncTier == SyncGroupCommit {
+		opts = append(opts, elena.WithSyncInterval(d.syncPeriod))
+	}
+	store, err := elena.Open(dir, opts...)
 	if err != nil {
 		return err
 	}

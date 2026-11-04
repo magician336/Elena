@@ -43,34 +43,41 @@ func RenderMarkdown(results []Result) string {
 func RenderJSON(results []Result) ([]byte, error) {
 	doc := jsonReport{Results: make([]jsonResult, 0, len(results))}
 	for _, res := range results {
-		jr := jsonResult{
+		doc.Results = append(doc.Results, jsonResult{
 			Driver:   res.Driver,
 			Workload: res.Workload,
-			Phases:   make([]jsonPhase, 0, len(res.Phases)),
-		}
-		for _, pr := range res.Phases {
-			jr.Phases = append(jr.Phases, jsonPhase{
-				Phase:      pr.Phase,
-				Ops:        pr.Ops,
-				ElapsedNS:  int64(pr.Elapsed),
-				Throughput: pr.Throughput,
-				Latency: jsonLatency{
-					Count:  pr.Latency.Count,
-					MinNS:  int64(pr.Latency.Min),
-					P50NS:  int64(pr.Latency.P50),
-					P99NS:  int64(pr.Latency.P99),
-					P999NS: int64(pr.Latency.P999),
-					MaxNS:  int64(pr.Latency.Max),
-				},
-			})
-		}
-		doc.Results = append(doc.Results, jr)
+			Phases:   jsonPhases(res.Phases),
+		})
 	}
 	out, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("render json report: %w", err)
 	}
 	return append(out, '\n'), nil
+}
+
+// jsonPhases renders phase results into the raw document's phase
+// shape — the one form every raw-numbers document this package emits
+// carries, single-run and matrix alike.
+func jsonPhases(phases []PhaseResult) []jsonPhase {
+	out := make([]jsonPhase, 0, len(phases))
+	for _, pr := range phases {
+		out = append(out, jsonPhase{
+			Phase:      pr.Phase,
+			Ops:        pr.Ops,
+			ElapsedNS:  int64(pr.Elapsed),
+			Throughput: pr.Throughput,
+			Latency: jsonLatency{
+				Count:  pr.Latency.Count,
+				MinNS:  int64(pr.Latency.Min),
+				P50NS:  int64(pr.Latency.P50),
+				P99NS:  int64(pr.Latency.P99),
+				P999NS: int64(pr.Latency.P999),
+				MaxNS:  int64(pr.Latency.Max),
+			},
+		})
+	}
+	return out
 }
 
 // jsonReport is the top level of the raw document.

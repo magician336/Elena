@@ -27,7 +27,7 @@ func runForTest(t *testing.T, args []string) (int, string, string) {
 // the CLI entry: a fresh directory, a micro workload, and the
 // throughput and latency numbers of both phases on stdout.
 func TestRunMicroWorkloadPerDriver(t *testing.T) {
-	for _, driver := range []string{"elena", "bbolt"} {
+	for _, driver := range []string{"elena", "bbolt", "badger", "rosedb"} {
 		t.Run(driver, func(t *testing.T) {
 			code, stdout, stderr := runForTest(t, []string{
 				"--driver", driver, "--ops", "5", "--value-size", "16",
