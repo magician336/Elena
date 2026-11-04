@@ -2,6 +2,8 @@ package elena_test
 
 import (
 	"errors"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -365,6 +367,150 @@ func TestSweepReclaimsRestartResidueOnNextSignal(t *testing.T) {
 	}
 	if len(events) != 1 {
 		t.Fatalf("Events() of the perpetual session after the residue sweep returned %d events, want 1", len(events))
+	}
+}
+
+// Close must join the sweep goroutine before releasing the directory:
+// the observable proof is the lock. The engine closes only after the
+// join, so a reopen that succeeds right after Close — while the sweep
+// was ticking and had even acted once — means the goroutine was already
+// gone: deterministic exit, not abandonment. Close stays idempotent
+// with the sweep running.
+func TestCloseJoinsSweepBeforeReleasingDirectory(t *testing.T) {
+	dir := t.TempDir()
+	st, err := elena.Open(dir, elena.WithSweepPeriod(10*time.Millisecond))
+	if err != nil {
+		t.Fatalf("Open(WithSweepPeriod) failed: %v", err)
+	}
+
+	temp := createTimedSession(t, st, "runs", "temp", 200*time.Millisecond)
+	for i := 0; i < 3; i++ {
+		mustAppend(t, temp, "event")
+	}
+	// Let the sweep act at least once, then Close while it keeps
+	// ticking.
+	waitForStats(t, st, "the sweep to reclaim the elapsed session", func(s elena.Stats) bool {
+		return s.LiveEntries == 0
+	})
+
+	if err := st.Close(); err != nil {
+		t.Fatalf("Close() with the sweep running failed: %v", err)
+	}
+	if err := st.Close(); err != nil {
+		t.Errorf("second Close() err = %v, want nil (idempotent)", err)
+	}
+
+	reopened, err := elena.Open(dir)
+	if err != nil {
+		t.Fatalf("Open(%q) right after Close failed: %v — the sweep goroutine was not joined before the lock was released", dir, err)
+	}
+	closeStore(t, reopened)
+}
+
+// The sweep must stay clean under the race detector while the store is
+// busy: appends to a perpetual trajectory, a concurrent reader checking
+// prefix consistency, short-lived timed sessions being created and
+// elapsing under the sweep's nose, and the sweep's merges rewriting
+// files around all of it. The perpetual trajectory must come out of the
+// storm hole-free and in order, and Close must join the still-ticking
+// sweep cleanly at the end.
+func TestSweepConcurrentWithReadsAndWrites(t *testing.T) {
+	dir := t.TempDir()
+	st, err := elena.Open(dir, elena.WithSweepPeriod(10*time.Millisecond))
+	if err != nil {
+		t.Fatalf("Open(WithSweepPeriod) failed: %v", err)
+	}
+	defer closeStore(t, st)
+
+	busy := createSession(t, st, "runs", "busy")
+
+	const writers = 4
+	const perWriter = 200
+	total := writers * perWriter
+
+	stop := make(chan struct{})
+	readerDone := make(chan struct{})
+	go func() {
+		defer close(readerDone)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			events, err := busy.Events()
+			if err != nil {
+				t.Errorf("Events() during the sweep error: %v", err)
+				return
+			}
+			for i, ev := range events {
+				if ev.Seq != uint64(i+1) {
+					t.Errorf("read observed sequence %d at position %d: not a consistent prefix", ev.Seq, i+1)
+					return
+				}
+			}
+		}
+	}()
+
+	// A drip of short-lived timed sessions keeps deadlines elapsing so
+	// the sweep merges while the writers write. Names cycle; creating a
+	// live timed session again is idempotent, and an append may hit a
+	// just-elapsed session — both fine, the drip only feeds the sweep.
+	dripDone := make(chan struct{})
+	go func() {
+		defer close(dripDone)
+		for i := 0; ; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			sess, err := st.CreateSessionWithTTL("runs", fmt.Sprintf("drip-%d", i%8), 80*time.Millisecond)
+			if err != nil {
+				t.Errorf("CreateSessionWithTTL(drip-%d) error: %v", i%8, err)
+				return
+			}
+			if _, err := sess.Append([]byte("event")); err != nil && !errors.Is(err, elena.ErrSessionEnded) {
+				t.Errorf("Append() to drip-%d error: %v", i%8, err)
+				return
+			}
+		}
+	}()
+
+	var wg sync.WaitGroup
+	for w := 0; w < writers; w++ {
+		wg.Add(1)
+		go func(w int) {
+			defer wg.Done()
+			for i := 0; i < perWriter; i++ {
+				if _, err := busy.Append([]byte(fmt.Sprintf("w%d-%d", w, i))); err != nil {
+					t.Errorf("Append() error: %v", err)
+					return
+				}
+			}
+		}(w)
+	}
+	wg.Wait()
+	close(stop)
+	<-readerDone
+	<-dripDone
+
+	events, err := busy.Events()
+	if err != nil {
+		t.Fatalf("final Events() failed: %v", err)
+	}
+	if len(events) != total {
+		t.Fatalf("final Events() returned %d events, want %d", len(events), total)
+	}
+	seen := make(map[string]bool, total)
+	for i, ev := range events {
+		if ev.Seq != uint64(i+1) {
+			t.Fatalf("final read: sequence %d at position %d — the storm lost or duplicated an event", ev.Seq, i+1)
+		}
+		if seen[string(ev.Payload)] {
+			t.Fatalf("payload %q appears twice — the sequence handed out duplicates", ev.Payload)
+		}
+		seen[string(ev.Payload)] = true
 	}
 }
 
