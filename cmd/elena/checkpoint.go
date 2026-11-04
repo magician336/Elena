@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"io"
 	"time"
 
@@ -79,17 +78,13 @@ func liveSessionCount(store *elena.Store) (int, error) {
 	return live, nil
 }
 
-// checkpointTime looks one checkpoint's creation time up in the
-// listing — the ID CreateCheckpoint returns is the listing's key.
+// checkpointTime looks one checkpoint's creation time up in its
+// manifest — a single-key read, the ID CreateCheckpoint returns being
+// the manifest's key.
 func checkpointTime(store *elena.Store, id uint64) (time.Time, error) {
-	checkpoints, err := store.Checkpoints()
+	manifest, err := store.Checkpoint(id)
 	if err != nil {
 		return time.Time{}, err
 	}
-	for _, info := range checkpoints {
-		if info.ID == id {
-			return info.CreatedAt, nil
-		}
-	}
-	return time.Time{}, fmt.Errorf("checkpoint %d missing from the listing after creation", id)
+	return manifest.CreatedAt, nil
 }

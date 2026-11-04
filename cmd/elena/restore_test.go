@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"time"
 
 	"elena"
 )
@@ -63,10 +64,13 @@ func TestRunRestoreLatestPrintsPointInTimeRead(t *testing.T) {
 	if strings.Contains(out, "trajectory beta/empty to seq 0\n  event") {
 		t.Errorf("empty trajectory printed event lines:\n%s", out)
 	}
+	if !strings.Contains(out, "restore read stops at each baseline; events past it stay on disk") {
+		t.Errorf("restore output missing the boundary line:\n%s", out)
+	}
 	assertSignalLines(t, out)
 }
 
-func TestRunRestoreSpecificCheckpointShowsStoredTail(t *testing.T) {
+func TestRunRestoreSpecificCheckpointStopsAtRecordedSeq(t *testing.T) {
 	dir := t.TempDir()
 	store, err := elena.Open(dir, elena.WithSweepDisabled())
 	if err != nil {
@@ -79,13 +83,13 @@ func TestRunRestoreSpecificCheckpointShowsStoredTail(t *testing.T) {
 	if _, err := runner.Append([]byte("first")); err != nil {
 		t.Fatalf("append first: %v", err)
 	}
-	if _, err := store.CreateCheckpoint(); err != nil { // checkpoint 1
+	if _, err := store.CreateCheckpoint(); err != nil { // checkpoint 1, runner at seq 1
 		t.Fatalf("checkpoint 1: %v", err)
 	}
 	if _, err := runner.Append([]byte("second")); err != nil {
 		t.Fatalf("append second: %v", err)
 	}
-	if _, err := store.CreateCheckpoint(); err != nil { // checkpoint 2
+	if _, err := store.CreateCheckpoint(); err != nil { // checkpoint 2, runner at seq 2
 		t.Fatalf("checkpoint 2: %v", err)
 	}
 	if _, err := runner.Append([]byte("third")); err != nil {
@@ -105,14 +109,66 @@ func TestRunRestoreSpecificCheckpointShowsStoredTail(t *testing.T) {
 	if !strings.Contains(out, "checkpoint 1 (created ") {
 		t.Errorf("restore did not name checkpoint 1:\n%s", out)
 	}
-	// The baseline is not a time machine: restore resets runtime state,
-	// the events appended after the checkpoint stay on disk, and the
-	// printed read honestly reaches the stored tail.
-	if !strings.Contains(out, "trajectory alpha/runner to seq 3\n") {
-		t.Errorf("restore read did not reach the stored tail:\n%s", out)
+	// The read stops at the sequence number the manifest recorded — the
+	// baseline's own timeline — even though events past it sit on disk.
+	if !strings.Contains(out, "trajectory alpha/runner to seq 1\n") {
+		t.Errorf("restore read did not stop at the recorded seq 1:\n%s", out)
 	}
-	if !strings.Contains(out, `"third"`) {
-		t.Errorf("restore read missing the post-baseline event still on disk:\n%s", out)
+	if !strings.Contains(out, `"first"`) {
+		t.Errorf("restore read missing the baseline event:\n%s", out)
+	}
+	for _, past := range []string{`"second"`, `"third"`} {
+		if strings.Contains(out, past) {
+			t.Errorf("restore read leaked the post-baseline event %s:\n%s", past, out)
+		}
+	}
+	if !strings.Contains(out, "restore read stops at each baseline; events past it stay on disk") {
+		t.Errorf("restore output missing the boundary line:\n%s", out)
+	}
+	assertSignalLines(t, out)
+}
+
+func TestRunRestoreSkipsElapsedSessionsOfTheManifest(t *testing.T) {
+	dir := t.TempDir()
+	store, err := elena.Open(dir, elena.WithSweepDisabled())
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	keeper, err := store.CreateSession("alpha", "keeper")
+	if err != nil {
+		t.Fatalf("create keeper: %v", err)
+	}
+	if _, err := keeper.Append([]byte("kept")); err != nil {
+		t.Fatalf("append kept: %v", err)
+	}
+	ttl := 10 * time.Millisecond
+	shorty, err := store.CreateSessionWithTTL("alpha", "shorty", ttl)
+	if err != nil {
+		t.Fatalf("create shorty: %v", err)
+	}
+	if _, err := shorty.Append([]byte("fleeting")); err != nil {
+		t.Fatalf("append fleeting: %v", err)
+	}
+	if _, err := store.CreateCheckpoint(); err != nil {
+		t.Fatalf("checkpoint: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	time.Sleep(ttl + 600*time.Millisecond) // the same elapse margin the root expiry tests use
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"restore", dir}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %q, want 0", code, stderr.String())
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "trajectory alpha/keeper to seq 1\n") {
+		t.Errorf("restore read missing the live session of the manifest:\n%s", out)
+	}
+	if strings.Contains(out, "shorty") || strings.Contains(out, "fleeting") {
+		t.Errorf("restore read showed an elapsed session, which reads as if never written:\n%s", out)
 	}
 	assertSignalLines(t, out)
 }

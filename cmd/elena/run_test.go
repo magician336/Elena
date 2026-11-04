@@ -11,6 +11,7 @@ import (
 // 0001). The agent appears nowhere in CLI copy at all.
 var signalFirstWords = map[string]bool{
 	"baseline":     true,
+	"baselines":    true,
 	"command":      true,
 	"commands":     true,
 	"checkpoint":   true,
@@ -113,7 +114,8 @@ func assertUsage(t *testing.T, out string) {
 		"checkpoint",
 		"restore",
 		"help",
-		"stats: dead ratio reads the directory's bytes; write amplification counts this process's writes",
+			"stats: dead ratio reads the directory's bytes; write amplification counts this process's writes",
+		"baselines: a restore resets runtime state; events past the baseline stay on disk, the printed read stops at the recorded sequence",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("usage text missing %q", want)

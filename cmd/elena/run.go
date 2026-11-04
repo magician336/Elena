@@ -32,6 +32,7 @@ store: <dir> is the store directory, created if absent
 sweep: off in every command; visibility never depends on it, only the timing of physical reclamation does
 merge: the explicit reclamation entry; it neither replaces nor requires the background sweep
 stats: dead ratio reads the directory's bytes; write amplification counts this process's writes
+baselines: a restore resets runtime state; events past the baseline stay on disk, the printed read stops at the recorded sequence
 events: printed with sequence numbers, append timestamps, byte sizes, quoted payload previews
 `
 

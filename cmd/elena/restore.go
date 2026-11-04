@@ -11,14 +11,11 @@ import (
 
 // runRestore resets the store's runtime view to a checkpoint baseline —
 // the named checkpoint's, or the most recent one — and prints the
-// point-in-time read that follows: every live trajectory's events up to
-// its reached sequence number, read through EventsUpTo. In the
-// kill-recovery scenario, nothing was appended past the checkpoint, so
-// each trajectory's stored tail is the sequence number the manifest
-// recorded and the printed read is the baseline's own timeline. The
-// baseline is not a time machine: events appended after the checkpoint
-// stay on disk, and the per-trajectory line names the sequence number
-// the read actually reached.
+// point-in-time read that follows: every trajectory the manifest
+// records, read through EventsUpTo at exactly the sequence number the
+// checkpoint recorded for it. The read stops at each baseline; events
+// appended after the checkpoint stay on disk — the baseline is a
+// baseline, not a time machine — and the closing line says so.
 func runRestore(args []string, stdout io.Writer) error {
 	if len(args) < 1 || len(args) > 2 {
 		return usagef("command restore wants 1 or 2 arguments: <dir> [id]")
@@ -32,17 +29,20 @@ func runRestore(args []string, stdout io.Writer) error {
 		if err := store.Restore(id); err != nil {
 			return err
 		}
-		createdAt, err := checkpointTime(store, id)
+		manifest, err := store.Checkpoint(id)
 		if err != nil {
 			return err
 		}
-		if err := writef(stdout, "checkpoint %d (created %s) restored\n", id, createdAt.Format(time.RFC3339Nano)); err != nil {
+		if err := writef(stdout, "checkpoint %d (created %s) restored\n", id, manifest.CreatedAt.Format(time.RFC3339Nano)); err != nil {
 			return err
 		}
 		if err := writef(stdout, "point-in-time read at the baseline:\n"); err != nil {
 			return err
 		}
-		return printBaselineRead(store, stdout)
+		if err := printBaselineRead(store, manifest, stdout); err != nil {
+			return err
+		}
+		return writef(stdout, "restore read stops at each baseline; events past it stay on disk\n")
 	})
 }
 
@@ -67,48 +67,35 @@ func checkpointToRestore(store *elena.Store, args []string) (uint64, error) {
 	return checkpoints[len(checkpoints)-1].ID, nil
 }
 
-// printBaselineRead prints every live trajectory's point-in-time read:
-// the trajectory line names the sequence number the read reaches — the
-// stored tail — and the event lines below it are the EventsUpTo result
-// at exactly that endpoint. A session whose deadline passed reads as if
-// never written and prints nothing.
-func printBaselineRead(store *elena.Store, stdout io.Writer) error {
-	namespaces, err := store.Namespaces()
-	if err != nil {
-		return err
-	}
-	for _, namespace := range namespaces {
-		sessions, err := store.Sessions(namespace)
+// printBaselineRead prints the manifest's own point-in-time read: one
+// trajectory line per recorded baseline, naming the sequence number the
+// checkpoint recorded, and below it the EventsUpTo result at exactly
+// that endpoint — the baseline's timeline, whatever sits past it on
+// disk. A session whose deadline has since passed reads as if never
+// written, so its baseline prints no events at all and the session is
+// skipped.
+func printBaselineRead(store *elena.Store, manifest elena.CheckpointManifest, stdout io.Writer) error {
+	for _, baseline := range manifest.Trajectories {
+		sess, live, err := sessionHandle(store, baseline.Namespace, elena.SessionInfo{
+			ID:       baseline.Session,
+			Deadline: baseline.Deadline,
+		})
 		if err != nil {
 			return err
 		}
-		for _, info := range sessions {
-			sess, live, err := sessionHandle(store, namespace, info)
-			if err != nil {
+		if !live {
+			continue
+		}
+		events, err := sess.EventsUpTo(baseline.ReachedSeq)
+		if err != nil {
+			return err
+		}
+		if err := writef(stdout, "trajectory %s/%s to seq %d\n", baseline.Namespace, baseline.Session, baseline.ReachedSeq); err != nil {
+			return err
+		}
+		for _, event := range events {
+			if err := writef(stdout, "  %s\n", eventLine(event)); err != nil {
 				return err
-			}
-			if !live {
-				continue
-			}
-			stored, err := sess.Events()
-			if err != nil {
-				return err
-			}
-			var tail uint64
-			if len(stored) > 0 {
-				tail = stored[len(stored)-1].Seq
-			}
-			events, err := sess.EventsUpTo(tail)
-			if err != nil {
-				return err
-			}
-			if err := writef(stdout, "trajectory %s/%s to seq %d\n", namespace, info.ID, tail); err != nil {
-				return err
-			}
-			for _, event := range events {
-				if err := writef(stdout, "  %s\n", eventLine(event)); err != nil {
-					return err
-				}
 			}
 		}
 	}
