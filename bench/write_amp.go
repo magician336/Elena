@@ -46,7 +46,7 @@ type WriteAmplificationReading struct {
 type WriteAmplificationResult struct {
 	BeforeMerge       WriteAmplificationReading `json:"before_merge"`
 	AfterMerge        WriteAmplificationReading `json:"after_merge"`
-	MergeFlushedBytes uint64                     `json:"merge_flushed_bytes"`
+	MergeFlushedBytes uint64                    `json:"merge_flushed_bytes"`
 }
 
 // WriteAmplificationReadingOf reads the byte pair off one Stats view.
