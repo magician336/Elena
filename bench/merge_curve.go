@@ -33,13 +33,13 @@ type MergeCurveConfig struct {
 // zero counts and zero percentiles for it — absence, not a zero that
 // reads like a measurement.
 type MergeCurvePoint struct {
-	OffsetNS     int64 `json:"offset_ns"`
-	Appends      int   `json:"appends"`
-	Reads        int   `json:"reads"`
-	AppendP50NS  int64 `json:"append_p50_ns"`
-	AppendP99NS  int64 `json:"append_p99_ns"`
-	ReadP50NS    int64 `json:"read_p50_ns"`
-	ReadP99NS    int64 `json:"read_p99_ns"`
+	OffsetNS    int64 `json:"offset_ns"`
+	Appends     int   `json:"appends"`
+	Reads       int   `json:"reads"`
+	AppendP50NS int64 `json:"append_p50_ns"`
+	AppendP99NS int64 `json:"append_p99_ns"`
+	ReadP50NS   int64 `json:"read_p50_ns"`
+	ReadP99NS   int64 `json:"read_p99_ns"`
 }
 
 // MergeCurveResult is the curve evidence: the merge's own wall time,
@@ -47,11 +47,11 @@ type MergeCurvePoint struct {
 // the total operation counts the load issued (samples outside the
 // sampled range included in these totals, dropped from the windows).
 type MergeCurveResult struct {
-	MergeElapsedNS  int64            `json:"merge_elapsed_ns"`
-	WindowNS        int64            `json:"window_ns"`
+	MergeElapsedNS  int64             `json:"merge_elapsed_ns"`
+	WindowNS        int64             `json:"window_ns"`
 	Points          []MergeCurvePoint `json:"points"`
-	ObservedAppends int              `json:"observed_appends"`
-	ObservedReads   int              `json:"observed_reads"`
+	ObservedAppends int               `json:"observed_appends"`
+	ObservedReads   int               `json:"observed_reads"`
 }
 
 // mergeSample is one operation the load observed, already reduced to

@@ -103,12 +103,12 @@ func TestBucketMergeSamplesNoSamples(t *testing.T) {
 // that spans the merge window with context on both sides.
 func TestRunMergeCurveMicro(t *testing.T) {
 	cfg := MergeCurveConfig{
-		Sessions:      4,
-		ValueSize:     128,
-		WarmupOps:     12,
-		Window:        2 * time.Millisecond,
+		Sessions:       4,
+		ValueSize:      128,
+		WarmupOps:      12,
+		Window:         2 * time.Millisecond,
 		ContextWindows: 2,
-		TailWindows:   3,
+		TailWindows:    3,
 	}
 	got, err := RunMergeCurve(filepath.Join(t.TempDir(), "data"), cfg)
 	if err != nil {
@@ -129,7 +129,7 @@ func TestRunMergeCurveMicro(t *testing.T) {
 	}
 	windowNS := int64(cfg.Window)
 	for i, p := range got.Points {
-		wantOffset := -int64(cfg.ContextWindows) * windowNS + int64(i) * windowNS
+		wantOffset := -int64(cfg.ContextWindows)*windowNS + int64(i)*windowNS
 		if p.OffsetNS != wantOffset {
 			t.Fatalf("point %d offset = %d ns, want %d ns (fixed steps of one window)", i, p.OffsetNS, wantOffset)
 		}

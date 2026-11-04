@@ -52,9 +52,9 @@ type WriteAmplificationResult struct {
 // WriteAmplificationSnapshotOf reads the byte pair off one Stats view.
 func WriteAmplificationSnapshotOf(stats elena.Stats) WriteAmplificationSnapshot {
 	return WriteAmplificationSnapshot{
-		LogicalBytes:  stats.BytesWritten,
-		FlushedBytes:  stats.BytesFlushed,
-		Ratio:         stats.WriteAmplification,
+		LogicalBytes: stats.BytesWritten,
+		FlushedBytes: stats.BytesFlushed,
+		Ratio:        stats.WriteAmplification,
 	}
 }
 
