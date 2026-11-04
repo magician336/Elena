@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -220,5 +221,23 @@ func TestRunRestoreArgCountIsUsageError(t *testing.T) {
 		if !strings.Contains(stderr.String(), tc.wantErr) {
 			t.Errorf("Run(%v) stderr = %q, want %q", tc.args, stderr.String(), tc.wantErr)
 		}
+	}
+}
+
+// TestRunRestoreUsageErrorCreatesNoStore pins that usage validation runs
+// before the store is opened: a bad checkpoint id must fail without
+// leaving a created directory behind (the test's working directory used
+// to sprout a store on every run of the table above).
+func TestRunRestoreUsageErrorCreatesNoStore(t *testing.T) {
+	dir := "usage-must-not-create-this-store"
+	var stdout, stderr bytes.Buffer
+
+	code := Run([]string{"restore", dir, "not-a-number"}, &stdout, &stderr)
+
+	if code != 2 {
+		t.Fatalf("Run exit code = %d, want 2", code)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("usage error created %q (stat err = %v); validation must precede the store open", dir, err)
 	}
 }
