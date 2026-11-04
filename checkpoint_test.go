@@ -181,3 +181,50 @@ func TestRestoreUnknownCheckpointReturnsErrCheckpointNotFound(t *testing.T) {
 		t.Fatalf("Append() after the rejected restore = (%d, %v), want (2, nil)", seq, err)
 	}
 }
+
+// Restore is a baseline to recover to, not a time machine: a session
+// created after the checkpoint stays on disk, stays listed, and its
+// trajectory keeps running from its own stored tail — restore neither
+// hides it nor rewinds it, because the manifest recorded nothing about
+// it.
+func TestRestoreLeavesPostBaselineSessionsVisibleAndRunning(t *testing.T) {
+	dir := t.TempDir()
+
+	st, err := elena.Open(dir)
+	if err != nil {
+		t.Fatalf("first Open(%q) failed: %v", dir, err)
+	}
+	baseline := createSession(t, st, "runs", "baseline")
+	mustAppend(t, baseline, "event")
+	id, err := st.CreateCheckpoint()
+	if err != nil {
+		t.Fatalf("CreateCheckpoint() failed: %v", err)
+	}
+
+	// After the baseline point: a fresh session with events of its own.
+	later := createSession(t, st, "runs", "later")
+	for i := 0; i < 2; i++ {
+		mustAppend(t, later, "post-baseline")
+	}
+	if err := st.Restore(id); err != nil {
+		t.Fatalf("Restore(%d) failed: %v", id, err)
+	}
+
+	sessions, err := st.Sessions("runs")
+	if err != nil {
+		t.Fatalf("Sessions() after restore failed: %v", err)
+	}
+	if len(sessions) != 2 || sessions[0].ID != "baseline" || sessions[1].ID != "later" {
+		t.Fatalf("Sessions() after restore = %v, want both baseline and later listed", sessions)
+	}
+	laterEvents, err := later.Events()
+	if err != nil {
+		t.Fatalf("Events() of the post-baseline session after restore failed: %v", err)
+	}
+	if len(laterEvents) != 2 {
+		t.Fatalf("Events() of the post-baseline session after restore returned %d events, want 2", len(laterEvents))
+	}
+	if seq, err := later.Append([]byte("continues")); err != nil || seq != 3 {
+		t.Fatalf("Append() of the post-baseline session after restore = (%d, %v), want (3, nil)", seq, err)
+	}
+}
