@@ -1,8 +1,48 @@
 package semantic
 
 import (
+	"errors"
+	"fmt"
 	"time"
+
+	"elena/internal/engine"
 )
+
+// collectDeadlines builds the sweep's initial deadline view: one scan
+// of every namespace's live session metadata. The engine reports only
+// entries whose deadline has not elapsed, so the view holds exactly the
+// pending deadlines of the directory — sessions stored by earlier
+// processes included, attached or not. Sessions already expired and not
+// yet merged are invisible to the scan by construction; their bytes are
+// reclaimed by the next merge this store runs, whenever a signal or a
+// manual call triggers one. Runs before the sweep starts, on a store
+// not yet shared, so no lock is taken.
+func (s *Store) collectDeadlines() error {
+	err := s.eng.Scan(engine.ScanOptions{Prefix: []byte{keyAreaSession}}, func(k, value []byte) error {
+		namespace, id, kind, ok := parseSessionKey(k)
+		if !ok {
+			return fmt.Errorf("elena: collect deadlines: %w", errCorruptedSessionKey)
+		}
+		if kind != keyKindMetadata {
+			return nil
+		}
+		form, deadline, derr := decodeMetadata(value)
+		if derr != nil {
+			return fmt.Errorf("elena: collect deadlines: %w", derr)
+		}
+		if form.timed {
+			s.deadlines[trajKey{namespace: namespace, session: id}] = deadline
+		}
+		return nil
+	})
+	if err != nil {
+		if errors.Is(err, errCorruptedSessionKey) || errors.Is(err, errMalformedMetadata) {
+			return err
+		}
+		return opErr("collect deadlines", err)
+	}
+	return nil
+}
 
 // Merge triggers one engine merge: every live entry is rewritten into a
 // fresh data file while every expired entry is left out — omission is

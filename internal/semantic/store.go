@@ -118,6 +118,10 @@ func Open(dir string, cfg Config) (*Store, error) {
 		sweepStop:    make(chan struct{}),
 		sweepDone:    make(chan struct{}),
 	}
+	if err := s.collectDeadlines(); err != nil {
+		_ = eng.Close()
+		return nil, err
+	}
 	s.startSweep(cfg)
 	return s, nil
 }

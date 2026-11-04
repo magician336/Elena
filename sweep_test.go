@@ -259,6 +259,115 @@ func TestSweepLeavesPerpetualSessionsIntact(t *testing.T) {
 	}
 }
 
+// A timed session stored by an earlier process, still live when this
+// process opens the directory, belongs to the sweep's deadline view
+// even though no handle ever attaches to it here: the Open-time scan of
+// the namespaces' live session metadata collects its deadline, so its
+// bytes come back without this process touching the session at all.
+func TestSweepTracksStoredTimedSessionsAcrossOpen(t *testing.T) {
+	dir := t.TempDir()
+	st, err := elena.Open(dir)
+	if err != nil {
+		t.Fatalf("first Open(%q) failed: %v", dir, err)
+	}
+	sess := createTimedSession(t, st, "runs", "stored", 400*time.Millisecond)
+	for i := 0; i < 2; i++ {
+		mustAppend(t, sess, "event")
+	}
+	if err := st.Close(); err != nil {
+		t.Fatalf("Close() failed: %v", err)
+	}
+
+	reopened, err := elena.Open(dir, elena.WithSweepPeriod(25*time.Millisecond))
+	if err != nil {
+		t.Fatalf("second Open(%q) failed: %v", dir, err)
+	}
+	defer closeStore(t, reopened)
+
+	waitForStats(t, reopened, "the sweep to reclaim the stored session", func(s elena.Stats) bool {
+		return s.LiveEntries == 0 && s.DataBytes == 0
+	})
+
+	sessions, err := reopened.Sessions("runs")
+	if err != nil {
+		t.Fatalf("Sessions() after the sweep failed: %v", err)
+	}
+	if len(sessions) != 0 {
+		t.Fatalf("Sessions() after the sweep returned %d sessions, want 0", len(sessions))
+	}
+}
+
+// A session that expired before this Open is invisible to the fresh
+// store — the engine reports only live entries — so the sweep's initial
+// deadline view cannot know it: the boundary is visibility immediate,
+// physical reclamation punctual only with a sweep signal. The residue
+// lingers on disk (replay still counts it) while the sweep idles, and
+// the next signal's merge — which drops every expired entry on disk —
+// reclaims the residue along with its own session.
+func TestSweepReclaimsRestartResidueOnNextSignal(t *testing.T) {
+	dir := t.TempDir()
+	st, err := elena.Open(dir, elena.WithSweepDisabled())
+	if err != nil {
+		t.Fatalf("first Open(%q) failed: %v", dir, err)
+	}
+	gone := createTimedSession(t, st, "runs", "gone", 300*time.Millisecond)
+	for i := 0; i < 2; i++ {
+		mustAppend(t, gone, "event")
+	}
+	keeper := createSession(t, st, "runs", "keeper")
+	mustAppend(t, keeper, "event")
+	if err := st.Close(); err != nil {
+		t.Fatalf("Close() failed: %v", err)
+	}
+
+	waitForTTLElapse(300 * time.Millisecond)
+
+	reopened, err := elena.Open(dir, elena.WithSweepPeriod(25*time.Millisecond))
+	if err != nil {
+		t.Fatalf("second Open(%q) failed: %v", dir, err)
+	}
+	defer closeStore(t, reopened)
+
+	// The residue is invisible in listings but still occupies the
+	// index: three entries of "gone" plus two of "keeper".
+	sessions, err := reopened.Sessions("runs")
+	if err != nil {
+		t.Fatalf("Sessions() after reopen failed: %v", err)
+	}
+	if len(sessions) != 1 || sessions[0].ID != "keeper" {
+		t.Fatalf("Sessions() after reopen = %+v, want only \"keeper\"", sessions)
+	}
+	if got := reopened.Stats().LiveEntries; got != 5 {
+		t.Fatalf("Stats().LiveEntries after reopen = %d, want 5 — the expired residue is still indexed", got)
+	}
+
+	// No deadline is pending (the residue was invisible at collection
+	// time), so the sweep idles: several periods change nothing.
+	time.Sleep(150 * time.Millisecond)
+	idle := reopened.Stats()
+	if idle.OpsMerge != 0 || idle.LiveEntries != 5 {
+		t.Fatalf("the sweep reclaimed without a signal: OpsMerge = %d, LiveEntries = %d, want (0, 5)", idle.OpsMerge, idle.LiveEntries)
+	}
+
+	// The next signal's merge reclaims the residue with its own session.
+	later := createTimedSession(t, reopened, "runs", "later", 300*time.Millisecond)
+	mustAppend(t, later, "event")
+	final := waitForStats(t, reopened, "the next signal to reclaim the residue", func(s elena.Stats) bool {
+		return s.LiveEntries == 2 && s.DeadBytes == 0 // keeper's metadata and event alone
+	})
+	if final.DataBytes != final.LiveBytes {
+		t.Errorf("Stats() after the sweep: DataBytes = %d, LiveBytes = %d, want equal", final.DataBytes, final.LiveBytes)
+	}
+	resumed := createSession(t, reopened, "runs", "keeper")
+	events, err := resumed.Events()
+	if err != nil {
+		t.Fatalf("Events() of the perpetual session after the residue sweep failed: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("Events() of the perpetual session after the residue sweep returned %d events, want 1", len(events))
+	}
+}
+
 // WithSweepPeriod must reject periods that cannot define a check
 // interval — zero or negative — with ErrInvalidSweepPeriod, and hand
 // back no store, leaving the directory free to open afterwards.
