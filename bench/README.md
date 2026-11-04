@@ -25,6 +25,11 @@ elena number is taken off the public surface an embedded host uses.
 | `report.go` | deterministic rendering of results: markdown report plus raw JSON |
 | `elena_driver.go` | elena through the public library API |
 | `bbolt_driver.go` | bbolt through its official Go package |
+| `seed.go` | the shared dataset builder behind the focused-metric scenarios |
+| `merge_curve.go` | the merge-curve scenario: latency over time across one explicit merge |
+| `startup_pair.go` | paired startup timing: hint files in place vs removed from the same dataset |
+| `index_memory.go` | per-entry index memory off `Stats`, against the vendor-reported nutsdb figure |
+| `write_amp.go` | write-amplification summary across an explicit merge, accounting declared |
 | `recovery/` | the kill -9 recovery rig: child writer, timed reopen, data-size tiers |
 | `cmd/bench` | the CLI: one engine, one micro workload, printed numbers |
 | `cmd/recovery` | the rig's CLI: tier runs with a stability verdict |
