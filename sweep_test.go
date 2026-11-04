@@ -1,6 +1,7 @@
 package elena_test
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -82,4 +83,29 @@ func TestMergeReclaimsElapsedSessionBytes(t *testing.T) {
 	if len(events) != 0 {
 		t.Fatalf("Events() after Merge() returned %d events, want 0", len(events))
 	}
+}
+
+// WithSweepPeriod must reject periods that cannot define a check
+// interval — zero or negative — with ErrInvalidSweepPeriod, and hand
+// back no store, leaving the directory free to open afterwards.
+func TestOpenWithSweepPeriodRejectsInvalidPeriod(t *testing.T) {
+	dir := t.TempDir()
+
+	for _, period := range []time.Duration{0, -time.Second} {
+		st, err := elena.Open(dir, elena.WithSweepPeriod(period))
+		if !errors.Is(err, elena.ErrInvalidSweepPeriod) {
+			t.Errorf("Open(WithSweepPeriod(%v)) err = %v, want ErrInvalidSweepPeriod", period, err)
+		}
+		if st != nil {
+			closeStore(t, st)
+			t.Error("Open must not return a store on failure")
+		}
+	}
+
+	// The rejected opens must not have locked the directory.
+	st, err := elena.Open(dir)
+	if err != nil {
+		t.Fatalf("Open(%q) after rejected opens failed: %v", dir, err)
+	}
+	closeStore(t, st)
 }

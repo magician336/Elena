@@ -24,6 +24,33 @@ var ErrDirectoryLocked = errors.New("elena: directory already locked by an open 
 // ErrClosed is returned by store operations attempted after Close.
 var ErrClosed = errors.New("elena: store is closed")
 
+// DefaultSweepPeriod is the period of the background sweep when a Config
+// leaves it unset: the sweep checks its deadline view once per minute.
+const DefaultSweepPeriod = time.Minute
+
+// ErrInvalidSweepPeriod is returned by Open when the configured sweep
+// period cannot define a check interval: negative when the sweep is
+// enabled. (The zero value means "unset, use the default"; an explicit
+// zero is rejected one layer up, where it cannot be confused with an
+// absent option.)
+var ErrInvalidSweepPeriod = errors.New("elena: sweep period must be positive")
+
+// Config configures the store at Open. The zero value is valid and
+// selects the defaults.
+type Config struct {
+	// SweepPeriod is the period at which the background sweep checks
+	// the deadline view of the timed sessions. Zero selects
+	// DefaultSweepPeriod; negative is rejected with an error wrapping
+	// ErrInvalidSweepPeriod. Ignored when SweepDisabled is set.
+	SweepPeriod time.Duration
+
+	// SweepDisabled turns the background sweep off: expiration is then
+	// purely lazy — elapsed sessions are invisible immediately, and
+	// their bytes come back only when some merge runs (a manual Merge,
+	// or any signal another Open's sweep fires).
+	SweepDisabled bool
+}
+
 // Store is a trajectory store rooted at one directory and driving one
 // engine instance. All its methods are safe for concurrent use.
 type Store struct {
@@ -50,12 +77,15 @@ type Store struct {
 }
 
 // Open opens the store rooted at dir, creating the directory if
-// needed. The store holds an exclusive lock on the directory for its
-// lifetime; a second Open of the same directory fails with an error
-// wrapping ErrDirectoryLocked until Close releases it. Events
-// acknowledged before Close return are durable: the engine runs with
-// its strictest sync policy.
-func Open(dir string) (*Store, error) {
+// needed, under the configuration cfg. The store holds an exclusive
+// lock on the directory for its lifetime; a second Open of the same
+// directory fails with an error wrapping ErrDirectoryLocked until Close
+// releases it. Events acknowledged before Close return are durable: the
+// engine runs with its strictest sync policy.
+func Open(dir string, cfg Config) (*Store, error) {
+	if !cfg.SweepDisabled && cfg.SweepPeriod < 0 {
+		return nil, fmt.Errorf("elena: open %q: sweep period %d: %w", dir, cfg.SweepPeriod, ErrInvalidSweepPeriod)
+	}
 	eng, err := engine.Open(dir, engine.Options{})
 	if err != nil {
 		if errors.Is(err, engine.ErrDirectoryLocked) {

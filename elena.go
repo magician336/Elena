@@ -4,6 +4,7 @@
 package elena
 
 import (
+	"fmt"
 	"time"
 
 	"elena/internal/semantic"
@@ -16,11 +17,29 @@ type Store struct {
 }
 
 // Open opens the store rooted at dir, creating the directory if
-// needed. The store holds an exclusive lock on its directory: while it
-// is open, a second Open of the same directory fails with an error
-// wrapping ErrDirectoryLocked.
-func Open(dir string) (*Store, error) {
-	store, err := semantic.Open(dir)
+// needed, configured by opts. The store holds an exclusive lock on its
+// directory: while it is open, a second Open of the same directory
+// fails with an error wrapping ErrDirectoryLocked.
+//
+// By default a background sweep runs: once per DefaultSweepPeriod it
+// checks the timed sessions' deadlines and, once one has elapsed,
+// triggers the merge that physically reclaims the session's bytes —
+// visibility of an elapsed session is immediate on the read path
+// either way; the sweep governs only how promptly the bytes come back.
+// WithSweepPeriod tunes the period and WithSweepDisabled turns the
+// sweep off entirely.
+func Open(dir string, opts ...OpenOption) (*Store, error) {
+	var o openOptions
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&o)
+		}
+	}
+	cfg, err := o.config()
+	if err != nil {
+		return nil, fmt.Errorf("elena: open %q: %w", dir, err)
+	}
+	store, err := semantic.Open(dir, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -164,6 +183,12 @@ var ErrInvalidLabel = semantic.ErrInvalidLabel
 // when the TTL cannot define a future deadline: zero, negative, or
 // beyond the storable range.
 var ErrInvalidTTL = semantic.ErrInvalidTTL
+
+// ErrInvalidSweepPeriod is wrapped into the error Open returns when
+// WithSweepPeriod is given a period that cannot define a check
+// interval: zero or negative. Turning the sweep off is its own explicit
+// option, WithSweepDisabled, not a period value.
+var ErrInvalidSweepPeriod = semantic.ErrInvalidSweepPeriod
 
 // ErrSessionExists is wrapped into the error the create calls return
 // when the named session already exists with a different lifecycle
