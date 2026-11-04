@@ -9,6 +9,7 @@ package semantic
 import (
 	"errors"
 	"fmt"
+	"sync"
 
 	"elena/internal/engine"
 )
@@ -26,6 +27,18 @@ var ErrClosed = errors.New("elena: store is closed")
 // engine instance. All its methods are safe for concurrent use.
 type Store struct {
 	eng *engine.Engine
+
+	// mu is the semantic write lock. It turns sequence allocation plus
+	// the append into one atomic step, so the sequence numbers handed
+	// out can never diverge from the order events reach the disk. It
+	// also guards the per-trajectory runtime state in trajectories.
+	// Reads take no semantic lock at all: they walk the engine's
+	// concurrent scan and get paths.
+	mu sync.Mutex
+
+	// trajectories holds the runtime state of every session attached
+	// through this Store, keyed by namespace and session ID.
+	trajectories map[trajKey]*trajectory
 }
 
 // Open opens the store rooted at dir, creating the directory if
@@ -42,11 +55,24 @@ func Open(dir string) (*Store, error) {
 		}
 		return nil, fmt.Errorf("elena: open %q: %w", dir, err)
 	}
-	return &Store{eng: eng}, nil
+	return &Store{
+		eng:          eng,
+		trajectories: make(map[trajKey]*trajectory),
+	}, nil
 }
 
 // Close closes the store and releases its directory lock. It is safe
 // to call more than once; repeated calls are no-ops.
 func (s *Store) Close() error {
 	return s.eng.Close()
+}
+
+// opErr adapts an engine error to the semantic layer: a closed engine
+// becomes ErrClosed; any other error keeps its identity and gains the
+// operation's context.
+func opErr(op string, err error) error {
+	if errors.Is(err, engine.ErrClosed) {
+		return fmt.Errorf("elena: %s: %w", op, ErrClosed)
+	}
+	return fmt.Errorf("elena: %s: %w", op, err)
 }

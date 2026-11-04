@@ -32,9 +32,42 @@ func (s *Store) Close() error {
 	return s.store.Close()
 }
 
+// Session is a handle to one session's trajectory. Handles obtained
+// from repeated CreateSession calls share the trajectory's state. All
+// methods are safe for use from multiple goroutines.
+type Session struct {
+	session *semantic.Session
+}
+
+// CreateSession creates the perpetual session named session in
+// namespace and returns a handle for appending to and reading its
+// trajectory. Creating an existing session returns a handle that
+// continues the stored trajectory: its sequence numbers continue from
+// the last stored event, across Close and Open.
+func (s *Store) CreateSession(namespace, session string) (*Session, error) {
+	inner, err := s.store.CreateSession(namespace, session)
+	if err != nil {
+		return nil, err
+	}
+	return &Session{session: inner}, nil
+}
+
+// Append appends payload to the trajectory as its next event and
+// returns the event's sequence number, starting at 1. The payload is
+// copied and treated as opaque bytes; an acknowledged append is durable
+// the moment Append returns. Appends from concurrent goroutines hand
+// out a hole-free, strictly increasing sequence.
+func (sess *Session) Append(payload []byte) (uint64, error) {
+	return sess.session.Append(payload)
+}
+
 // ErrDirectoryLocked is wrapped into the error Open returns when the
 // directory is already held by another open store.
 var ErrDirectoryLocked = semantic.ErrDirectoryLocked
+
+// ErrInvalidLabel is wrapped into the error CreateSession returns when
+// the namespace or the session ID is empty or too long.
+var ErrInvalidLabel = semantic.ErrInvalidLabel
 
 // ErrClosed is wrapped into the errors of operations attempted after
 // Close.
