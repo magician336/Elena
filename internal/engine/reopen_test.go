@@ -62,7 +62,7 @@ func TestCleanReopenPreservesAllData(t *testing.T) {
 // survive: overwrites resolve to the newest entry and tombstones keep
 // their keys hidden. A key written after another was deleted stays
 // readable.
-func TestCleanReopenReplaysOverwritesAndTombstones(t *testing.T) {
+func TestCleanReopenResolvesOverwritesAndTombstones(t *testing.T) {
 	dir := t.TempDir()
 
 	eng := openEngine(t, dir)

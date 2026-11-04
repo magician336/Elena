@@ -230,7 +230,7 @@ func TestScanVisitorErrorStopsIteration(t *testing.T) {
 // unvisited range does not appear, a Deleted key still appears with
 // its snapshot value, and an overwritten key yields the value from the
 // snapshot, not the overwrite.
-func TestScanSnapshotSemanticsUnderWritesFromVisit(t *testing.T) {
+func TestScanConsistencySemanticsUnderWritesFromVisit(t *testing.T) {
 	dir := t.TempDir()
 	eng := openEngine(t, dir)
 	defer closeEngine(t, eng)
