@@ -1,0 +1,24 @@
+{
+  "results": [
+    {
+      "driver": "elena",
+      "workload": "elena-point-in-time",
+      "phases": [
+        {
+          "phase": "point-in-time",
+          "ops": 102400,
+          "elapsed_ns": 362070892216,
+          "throughput_ops_sec": 282.81754264551984,
+          "latency": {
+            "count": 102400,
+            "min_ns": 6954,
+            "p50_ns": 4246231,
+            "p99_ns": 8750902,
+            "p999_ns": 13011560,
+            "max_ns": 56004159
+          }
+        }
+      ]
+    }
+  ]
+}

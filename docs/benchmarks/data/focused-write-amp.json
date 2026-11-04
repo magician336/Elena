@@ -1,0 +1,16 @@
+{
+  "scenario": "write-amp",
+  "result": {
+    "before_merge": {
+      "logical_bytes": 70391370,
+      "flushed_bytes": 72341066,
+      "ratio": 1.027697940812915
+    },
+    "after_merge": {
+      "logical_bytes": 70391370,
+      "flushed_bytes": 144682132,
+      "ratio": 2.05539588162583
+    },
+    "merge_flushed_bytes": 72341066
+  }
+}

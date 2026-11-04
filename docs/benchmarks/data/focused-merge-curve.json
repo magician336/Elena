@@ -1,0 +1,182 @@
+{
+  "scenario": "merge-curve",
+  "result": {
+    "merge_elapsed_ns": 194833367,
+    "window_ns": 500000000,
+    "points": [
+      {
+        "offset_ns": -3000000000,
+        "appends": 115,
+        "reads": 115,
+        "append_p50_ns": 4243321,
+        "append_p99_ns": 5871635,
+        "read_p50_ns": 18218,
+        "read_p99_ns": 50633
+      },
+      {
+        "offset_ns": -2500000000,
+        "appends": 114,
+        "reads": 114,
+        "append_p50_ns": 4271655,
+        "append_p99_ns": 5010172,
+        "read_p50_ns": 16871,
+        "read_p99_ns": 52793
+      },
+      {
+        "offset_ns": -2000000000,
+        "appends": 112,
+        "reads": 112,
+        "append_p50_ns": 4280347,
+        "append_p99_ns": 7768970,
+        "read_p50_ns": 17178,
+        "read_p99_ns": 43987
+      },
+      {
+        "offset_ns": -1500000000,
+        "appends": 110,
+        "reads": 110,
+        "append_p50_ns": 4364191,
+        "append_p99_ns": 6043952,
+        "read_p50_ns": 20172,
+        "read_p99_ns": 57625
+      },
+      {
+        "offset_ns": -1000000000,
+        "appends": 112,
+        "reads": 112,
+        "append_p50_ns": 4262201,
+        "append_p99_ns": 11971713,
+        "read_p50_ns": 18855,
+        "read_p99_ns": 46917
+      },
+      {
+        "offset_ns": -500000000,
+        "appends": 113,
+        "reads": 113,
+        "append_p50_ns": 4288072,
+        "append_p99_ns": 5392418,
+        "read_p50_ns": 18583,
+        "read_p99_ns": 46317
+      },
+      {
+        "offset_ns": 0,
+        "appends": 106,
+        "reads": 106,
+        "append_p50_ns": 4175157,
+        "append_p99_ns": 13112769,
+        "read_p50_ns": 13573,
+        "read_p99_ns": 47733
+      },
+      {
+        "offset_ns": 500000000,
+        "appends": 116,
+        "reads": 116,
+        "append_p50_ns": 4168045,
+        "append_p99_ns": 5008832,
+        "read_p50_ns": 14130,
+        "read_p99_ns": 43180
+      },
+      {
+        "offset_ns": 1000000000,
+        "appends": 115,
+        "reads": 115,
+        "append_p50_ns": 4267265,
+        "append_p99_ns": 5126097,
+        "read_p50_ns": 14124,
+        "read_p99_ns": 46800
+      },
+      {
+        "offset_ns": 1500000000,
+        "appends": 119,
+        "reads": 119,
+        "append_p50_ns": 4114590,
+        "append_p99_ns": 4859168,
+        "read_p50_ns": 11328,
+        "read_p99_ns": 41528
+      },
+      {
+        "offset_ns": 2000000000,
+        "appends": 113,
+        "reads": 113,
+        "append_p50_ns": 4287259,
+        "append_p99_ns": 8151736,
+        "read_p50_ns": 11959,
+        "read_p99_ns": 36242
+      },
+      {
+        "offset_ns": 2500000000,
+        "appends": 116,
+        "reads": 116,
+        "append_p50_ns": 4210092,
+        "append_p99_ns": 4929201,
+        "read_p50_ns": 11580,
+        "read_p99_ns": 37294
+      },
+      {
+        "offset_ns": 3000000000,
+        "appends": 98,
+        "reads": 98,
+        "append_p50_ns": 4367483,
+        "append_p99_ns": 8694972,
+        "read_p50_ns": 13271,
+        "read_p99_ns": 49441
+      },
+      {
+        "offset_ns": 3500000000,
+        "appends": 116,
+        "reads": 116,
+        "append_p50_ns": 4269538,
+        "append_p99_ns": 5075642,
+        "read_p50_ns": 16068,
+        "read_p99_ns": 55511
+      },
+      {
+        "offset_ns": 4000000000,
+        "appends": 111,
+        "reads": 111,
+        "append_p50_ns": 4366717,
+        "append_p99_ns": 7658246,
+        "read_p50_ns": 18306,
+        "read_p99_ns": 51216
+      },
+      {
+        "offset_ns": 4500000000,
+        "appends": 112,
+        "reads": 112,
+        "append_p50_ns": 4414333,
+        "append_p99_ns": 5006398,
+        "read_p50_ns": 13842,
+        "read_p99_ns": 44955
+      },
+      {
+        "offset_ns": 5000000000,
+        "appends": 111,
+        "reads": 111,
+        "append_p50_ns": 4331781,
+        "append_p99_ns": 8314780,
+        "read_p50_ns": 11126,
+        "read_p99_ns": 27810
+      },
+      {
+        "offset_ns": 5500000000,
+        "appends": 105,
+        "reads": 105,
+        "append_p50_ns": 4479506,
+        "append_p99_ns": 11510348,
+        "read_p50_ns": 14776,
+        "read_p99_ns": 45561
+      },
+      {
+        "offset_ns": 6000000000,
+        "appends": 42,
+        "reads": 42,
+        "append_p50_ns": 4635354,
+        "append_p99_ns": 5837378,
+        "read_p50_ns": 11646,
+        "read_p99_ns": 24935
+      }
+    ],
+    "observed_appends": 51381,
+    "observed_reads": 51380
+  }
+}
