@@ -219,6 +219,75 @@ func (s *Store) Checkpoints() ([]CheckpointInfo, error) {
 	return checkpoints, nil
 }
 
+// TrajectoryBaseline is one trajectory's line of a checkpoint's
+// manifest: the trajectory's identity and the baseline the checkpoint
+// recorded for it.
+type TrajectoryBaseline struct {
+	// Namespace is the trajectory's namespace.
+	Namespace string
+
+	// Session is the ID of the session owning the trajectory.
+	Session string
+
+	// ReachedSeq is the sequence number the checkpoint recorded for the
+	// trajectory: the last event the baseline covers. A point-in-time
+	// read at it — EventsUpTo(ReachedSeq) — returns exactly what the
+	// checkpoint saw, whatever was appended after it.
+	ReachedSeq uint64
+
+	// Deadline is the session deadline the manifest recorded — the zero
+	// time marks a perpetual session.
+	Deadline time.Time
+}
+
+// CheckpointManifest is one checkpoint in full: its ID, its creation
+// time, and every trajectory's recorded baseline, in manifest order.
+type CheckpointManifest struct {
+	// ID identifies the checkpoint; Restore takes it back.
+	ID uint64
+
+	// CreatedAt is when the checkpoint was created, as stored with it.
+	CreatedAt time.Time
+
+	// Trajectories lists one baseline per session the manifest recorded,
+	// in manifest order — the deterministic key order of the encoding.
+	Trajectories []TrajectoryBaseline
+}
+
+// Checkpoint returns the manifest one stored checkpoint recorded: the
+// creation-time view of every trajectory's reached sequence number and
+// every session's deadline. A stored manifest never changes — reading
+// it after later appends and later checkpoints reports the numbers it
+// was created with. An unknown ID fails with an error wrapping
+// ErrCheckpointNotFound.
+func (s *Store) Checkpoint(id uint64) (CheckpointManifest, error) {
+	value, err := s.eng.Get(checkpointKey(id))
+	if err != nil {
+		if errors.Is(err, engine.ErrNotFound) {
+			return CheckpointManifest{}, fmt.Errorf("elena: read checkpoint %d: %w", id, ErrCheckpointNotFound)
+		}
+		return CheckpointManifest{}, opErr("read checkpoint", err)
+	}
+	manifest, err := decodeManifest(value)
+	if err != nil {
+		return CheckpointManifest{}, fmt.Errorf("elena: read checkpoint %d: %w", id, err)
+	}
+	out := CheckpointManifest{
+		ID:           id,
+		CreatedAt:    manifest.createdAt,
+		Trajectories: make([]TrajectoryBaseline, len(manifest.entries)),
+	}
+	for i, entry := range manifest.entries {
+		out.Trajectories[i] = TrajectoryBaseline{
+			Namespace:  entry.key.namespace,
+			Session:    entry.key.session,
+			ReachedSeq: entry.lastSeq,
+			Deadline:   entry.deadline,
+		}
+	}
+	return out, nil
+}
+
 // Restore resets the store's runtime view — every trajectory the
 // checkpoint records gets back its recorded sequence number and
 // deadline — to the values the checkpoint's manifest wrote down.

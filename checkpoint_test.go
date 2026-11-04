@@ -680,3 +680,126 @@ func TestConcurrentCheckpointsBatchesAndAppends(t *testing.T) {
 		}
 	}
 }
+
+// Checkpoint must expose the manifest one checkpoint recorded: every
+// trajectory of the baseline — namespace, session, the reached sequence
+// number, the deadline — in manifest order. The reached sequence number
+// is the baseline in library terms: EventsUpTo(ReachedSeq) reads
+// exactly what the checkpoint saw, whatever was appended after it. A
+// stored manifest never changes: a checkpoint read after later appends
+// and later checkpoints still reports the numbers it was created with.
+func TestCheckpointReturnsTheRecordedBaselines(t *testing.T) {
+	dir := t.TempDir()
+	st, err := elena.Open(dir)
+	if err != nil {
+		t.Fatalf("Open(%q) failed: %v", dir, err)
+	}
+	alpha := createSession(t, st, "runs", "alpha")
+	mustAppend(t, alpha, "one")
+	mustAppend(t, alpha, "two")
+	mustAppend(t, alpha, "three")
+
+	ttl := time.Hour
+	timedWindowStart := time.Now()
+	timed, err := st.CreateSessionWithTTL("runs", "timed", ttl)
+	if err != nil {
+		t.Fatalf("CreateSessionWithTTL(runs, timed) failed: %v", err)
+	}
+	if _, err := timed.Append([]byte("tick")); err != nil {
+		t.Fatalf("timed Append failed: %v", err)
+	}
+	timedWindowEnd := time.Now()
+
+	windowStart := time.Now()
+	cp, err := st.CreateCheckpoint()
+	if err != nil {
+		t.Fatalf("CreateCheckpoint() failed: %v", err)
+	}
+	windowEnd := time.Now()
+	manifest, err := st.Checkpoint(cp)
+	if err != nil {
+		t.Fatalf("Checkpoint(%d) failed: %v", cp, err)
+	}
+	if manifest.ID != cp {
+		t.Errorf("Checkpoint(%d).ID = %d, want %d", cp, manifest.ID, cp)
+	}
+	if manifest.CreatedAt.Before(windowStart) || manifest.CreatedAt.After(windowEnd) {
+		t.Errorf("Checkpoint CreatedAt = %v, want within the test window", manifest.CreatedAt)
+	}
+	if len(manifest.Trajectories) != 2 {
+		t.Fatalf("Checkpoint Trajectories = %d entries, want 2: %+v", len(manifest.Trajectories), manifest.Trajectories)
+	}
+	first, second := manifest.Trajectories[0], manifest.Trajectories[1]
+	if first.Namespace != "runs" || first.Session != "alpha" {
+		t.Errorf("Trajectories[0] = %s/%s, want runs/alpha in manifest order", first.Namespace, first.Session)
+	}
+	if first.ReachedSeq != 3 {
+		t.Errorf("Trajectories[0].ReachedSeq = %d, want 3 — the baseline covers three events", first.ReachedSeq)
+	}
+	if !first.Deadline.IsZero() {
+		t.Errorf("Trajectories[0].Deadline = %v, want the zero time of a perpetual session", first.Deadline)
+	}
+	if second.Namespace != "runs" || second.Session != "timed" {
+		t.Errorf("Trajectories[1] = %s/%s, want runs/timed", second.Namespace, second.Session)
+	}
+	if second.ReachedSeq != 1 {
+		t.Errorf("Trajectories[1].ReachedSeq = %d, want 1", second.ReachedSeq)
+	}
+	if second.Deadline.Before(timedWindowStart) || second.Deadline.After(timedWindowEnd.Add(ttl)) {
+		t.Errorf("Trajectories[1].Deadline = %v, want between creation and creation+ttl", second.Deadline)
+	}
+
+	// Past the baseline: one more event, a second checkpoint. The first
+	// manifest must still report the numbers it was created with, and
+	// the second must record the new tail.
+	mustAppend(t, alpha, "four")
+	cp2, err := st.CreateCheckpoint()
+	if err != nil {
+		t.Fatalf("second CreateCheckpoint() failed: %v", err)
+	}
+	again, err := st.Checkpoint(cp)
+	if err != nil {
+		t.Fatalf("Checkpoint(%d) after later appends failed: %v", cp, err)
+	}
+	if got := again.Trajectories[0].ReachedSeq; got != 3 {
+		t.Errorf("first manifest ReachedSeq after later appends = %d, want 3 — a stored manifest never changes", got)
+	}
+	later, err := st.Checkpoint(cp2)
+	if err != nil {
+		t.Fatalf("Checkpoint(%d) failed: %v", cp2, err)
+	}
+	if got := later.Trajectories[0].ReachedSeq; got != 4 {
+		t.Errorf("second manifest ReachedSeq = %d, want 4", got)
+	}
+
+	if err := st.Close(); err != nil {
+		t.Fatalf("Close() failed: %v", err)
+	}
+	reopened, err := elena.Open(dir)
+	if err != nil {
+		t.Fatalf("second Open(%q) failed: %v", dir, err)
+	}
+	defer closeStore(t, reopened)
+	reopenedManifest, err := reopened.Checkpoint(cp)
+	if err != nil {
+		t.Fatalf("Checkpoint(%d) after reopen failed: %v", cp, err)
+	}
+	if len(reopenedManifest.Trajectories) != 2 || reopenedManifest.Trajectories[0].ReachedSeq != 3 {
+		t.Errorf("Checkpoint(%d) after reopen = %+v, want the same manifest", cp, reopenedManifest.Trajectories)
+	}
+}
+
+// Checkpoint must fail with ErrCheckpointNotFound for an ID nothing
+// stored — and fail alone, changing nothing.
+func TestCheckpointUnknownIDFailsAlone(t *testing.T) {
+	dir := t.TempDir()
+	st, err := elena.Open(dir)
+	if err != nil {
+		t.Fatalf("Open(%q) failed: %v", dir, err)
+	}
+	defer closeStore(t, st)
+
+	if _, err := st.Checkpoint(99); !errors.Is(err, elena.ErrCheckpointNotFound) {
+		t.Errorf("Checkpoint(99) err = %v, want ErrCheckpointNotFound", err)
+	}
+}

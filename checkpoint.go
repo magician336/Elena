@@ -44,6 +44,70 @@ func (s *Store) Checkpoints() ([]CheckpointInfo, error) {
 	return checkpoints, nil
 }
 
+// TrajectoryBaseline is one trajectory's line of a checkpoint's
+// manifest: the trajectory's identity and the baseline the checkpoint
+// recorded for it — the sequence number a point-in-time read stops at
+// to see exactly what the checkpoint saw.
+type TrajectoryBaseline struct {
+	// Namespace is the trajectory's namespace.
+	Namespace string
+
+	// Session is the ID of the session owning the trajectory.
+	Session string
+
+	// ReachedSeq is the sequence number the checkpoint recorded for the
+	// trajectory: the last event the baseline covers. EventsUpTo(
+	// ReachedSeq) reads the baseline's own timeline; events appended
+	// after the checkpoint stay on disk and read past it.
+	ReachedSeq uint64
+
+	// Deadline is the session deadline the manifest recorded — the zero
+	// time marks a perpetual session.
+	Deadline time.Time
+}
+
+// CheckpointManifest is one checkpoint in full: its ID, its creation
+// time, and every trajectory's recorded baseline.
+type CheckpointManifest struct {
+	// ID identifies the checkpoint; Restore takes it back.
+	ID uint64
+
+	// CreatedAt is when the checkpoint was created, as stored with the
+	// checkpoint — the same instant after every reopen.
+	CreatedAt time.Time
+
+	// Trajectories lists one baseline per session the manifest recorded,
+	// in manifest order — the deterministic key order of the encoding.
+	Trajectories []TrajectoryBaseline
+}
+
+// Checkpoint returns the manifest one stored checkpoint recorded: the
+// creation-time view of every trajectory's reached sequence number and
+// every session's deadline. A stored manifest never changes — reading
+// it after later appends and later checkpoints reports the numbers it
+// was created with, so the baseline it names is a stable fact on disk.
+// An unknown ID fails with an error wrapping ErrCheckpointNotFound.
+func (s *Store) Checkpoint(id uint64) (CheckpointManifest, error) {
+	inner, err := s.store.Checkpoint(id)
+	if err != nil {
+		return CheckpointManifest{}, err
+	}
+	out := CheckpointManifest{
+		ID:           inner.ID,
+		CreatedAt:    inner.CreatedAt,
+		Trajectories: make([]TrajectoryBaseline, len(inner.Trajectories)),
+	}
+	for i, baseline := range inner.Trajectories {
+		out.Trajectories[i] = TrajectoryBaseline{
+			Namespace:  baseline.Namespace,
+			Session:    baseline.Session,
+			ReachedSeq: baseline.ReachedSeq,
+			Deadline:   baseline.Deadline,
+		}
+	}
+	return out, nil
+}
+
 // Restore resets the store's runtime view — every trajectory's sequence
 // counter and the session table — to the values the checkpoint recorded:
 // appends afterwards continue from the checkpoint's sequence number, and
