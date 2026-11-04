@@ -44,6 +44,10 @@ const (
 // their structural validation at read time.
 var errCorruptedCheckpoint = errors.New("elena: corrupted checkpoint")
 
+// ErrCheckpointNotFound is returned by Restore when the store holds no
+// checkpoint with the requested ID.
+var ErrCheckpointNotFound = errors.New("elena: checkpoint not found")
+
 // checkpointEntry is one session's line of the manifest: the trajectory
 // the entry names, the last sequence number the checkpoint reached, and
 // the session's deadline — the zero time marks a perpetual session.
@@ -213,6 +217,45 @@ func (s *Store) Checkpoints() ([]CheckpointInfo, error) {
 	}
 	sort.Slice(checkpoints, func(i, j int) bool { return checkpoints[i].ID < checkpoints[j].ID })
 	return checkpoints, nil
+}
+
+// Restore resets the store's runtime view — every trajectory the
+// checkpoint records gets back its recorded sequence number and
+// deadline — to the values the checkpoint's manifest wrote down.
+// Sessions attached to this store that the checkpoint does not record
+// keep their current runtime state. The manifest's deadline for a timed
+// session is the deadline its stored entries have carried all along, so
+// a restored session elapses at its original deadline, not one
+// recomputed at restore time.
+func (s *Store) Restore(id uint64) error {
+	value, err := s.eng.Get(checkpointKey(id))
+	if err != nil {
+		if errors.Is(err, engine.ErrNotFound) {
+			return fmt.Errorf("elena: restore checkpoint %d: %w", id, ErrCheckpointNotFound)
+		}
+		return opErr("restore checkpoint", err)
+	}
+	manifest, err := decodeManifest(value)
+	if err != nil {
+		return fmt.Errorf("elena: restore checkpoint %d: %w", id, err)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	restored := make(map[trajKey]*trajectory, len(manifest.entries)+len(s.trajectories))
+	for _, entry := range manifest.entries {
+		restored[entry.key] = &trajectory{lastSeq: entry.lastSeq, deadline: entry.deadline}
+	}
+	// Sessions the checkpoint does not record are data after the
+	// baseline: they keep their runtime state untouched.
+	for key, traj := range s.trajectories {
+		if _, ok := restored[key]; !ok {
+			restored[key] = traj
+		}
+	}
+	s.trajectories = restored
+	return nil
 }
 
 // buildManifest collects the whole store's manifest: every live session
