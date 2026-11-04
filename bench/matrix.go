@@ -251,7 +251,7 @@ func tierDeclaration(engine string, tier SyncTier, period time.Duration) TierDec
 		}
 	case "rosedb":
 		if tier == SyncPerWrite {
-			td.Configuration = "Sync set to true: the write-ahead log segment fsyncs after every write before it acknowledges (the v2 default is false; set explicitly)"
+			td.Configuration = "every append runs as one batch with Sync=true, whose commit fsyncs the write-ahead log before it acknowledges (the DB-level Sync flag stays false — in rosedb v2 it governs a write-ahead path the batch operations never ride, and it disables the batch-level sync)"
 		} else {
 			td.Configuration = "rosedb's BytesPerSync flushes by accumulated bytes rather than by a time period, which is not this tier, so it produces no rosedb numbers"
 		}

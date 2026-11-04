@@ -8,17 +8,21 @@ import (
 
 // rosedbDriver drives rosedb through its official Go package. Mapping:
 // one logical key is one 8-byte big-endian key — the same encoding
-// every KV driver here uses — an append is a Put, a read a Get of the
-// key's latest value.
+// every KV driver here uses — an append is one batch's Put, a read a
+// Get of the key's latest value.
 //
-// Durability: Sync is set to true — after every write the write-ahead
-// log segment is fsynced before the write acknowledges, the
-// configuration rosedb's option documentation scopes as required for
-// durability of a single write. The rosedb default is false, so the
-// driver sets the tier explicitly instead of riding the default; every
-// other option keeps its default. rosedb's BytesPerSync flushes by
-// accumulated bytes rather than by a time period, which is not the
-// harness's group-commit tier, so that tier produces no rosedb numbers.
+// Durability, per the rosedb v2 source (wal v1.3.8): the DB-level Sync
+// flag only governs a write-ahead path the batch operations never
+// ride, and db.Put runs its internal batch with Sync off — so no
+// DB-level setting makes a Put fsync. The every-write-synchronized
+// configuration that exists is a batch with Sync=true (its commit
+// fsyncs the write-ahead log before returning), which requires the
+// DB-level Sync flag to stay false — a batch's own sync is disabled
+// otherwise. The driver therefore opens with Sync=false and executes
+// every append as one Sync=true batch: an acknowledged append is
+// fsynced. rosedb's BytesPerSync flushes by accumulated bytes rather
+// than by a time period, which is not the harness's group-commit tier,
+// so that tier produces no rosedb numbers.
 type rosedbDriver struct {
 	db        *rosedb.DB
 	latestLen map[uint64]int // key → payload length of its latest acknowledged put
@@ -27,14 +31,15 @@ type rosedbDriver struct {
 // Name identifies the driver in reports.
 func (d *rosedbDriver) Name() string { return "rosedb" }
 
-// Open opens a fresh database under dir with the synchronized-writes
-// tier pinned. DefaultOptions is copied field by field (Options is a
-// plain value type) and the two fields this driver owns are overridden
-// on the copy.
+// Open opens a fresh database under dir. DefaultOptions is copied
+// field by field (Options is a plain value type) and the two fields
+// this driver owns are overridden on the copy: the directory, and Sync
+// false — the per-write tier rides the batch-level sync, which the
+// DB-level flag would disable.
 func (d *rosedbDriver) Open(dir string) error {
 	opts := rosedb.DefaultOptions
 	opts.DirPath = dir
-	opts.Sync = true
+	opts.Sync = false
 	db, err := rosedb.Open(opts)
 	if err != nil {
 		return err
@@ -44,15 +49,22 @@ func (d *rosedbDriver) Open(dir string) error {
 	return nil
 }
 
-// Do executes one operation: an append puts the value under the key's
-// 8-byte encoding and records the payload length; a read gets the key
-// back and verifies it — present, with the payload length of the
-// latest put — so a read that misses the newest value fails the run
-// instead of passing silently.
+// Do executes one operation: an append is one Sync=true batch — put,
+// commit, and the fsync the commit performs — then records the payload
+// length; a read gets the key back and verifies it — present, with the
+// payload length of the latest put — so a read that misses the newest
+// value fails the run instead of passing silently.
 func (d *rosedbDriver) Do(op Op) error {
 	switch op.Kind {
 	case OpAppend:
-		if err := d.db.Put(kvKey(op.Key), op.Value); err != nil {
+		batch := d.db.NewBatch(rosedb.BatchOptions{Sync: true})
+		if err := batch.Put(kvKey(op.Key), op.Value); err != nil {
+			_ = batch.Rollback()
+			return err
+		}
+		// No Rollback after Commit in any outcome: Commit releases the
+		// batch's lock itself, success and failure alike.
+		if err := batch.Commit(); err != nil {
 			return err
 		}
 		d.latestLen[op.Key] = len(op.Value)
