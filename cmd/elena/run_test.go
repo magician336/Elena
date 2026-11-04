@@ -27,6 +27,7 @@ var signalFirstWords = map[string]bool{
 	"restore":      true,
 	"session":      true,
 	"space":        true,
+	"stats":        true,
 	"status":       true,
 	"store":        true,
 	"sweep":        true,
@@ -112,6 +113,7 @@ func assertUsage(t *testing.T, out string) {
 		"checkpoint",
 		"restore",
 		"help",
+		"stats: dead ratio reads the directory's bytes; write amplification counts this process's writes",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("usage text missing %q", want)

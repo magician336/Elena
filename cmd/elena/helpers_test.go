@@ -17,6 +17,13 @@ import (
 func seedDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
+	seedInto(t, dir)
+	return dir
+}
+
+// seedInto builds the fixture store inside dir.
+func seedInto(t *testing.T, dir string) {
+	t.Helper()
 	store, err := elena.Open(dir, elena.WithSweepDisabled())
 	if err != nil {
 		t.Fatalf("open seeded store: %v", err)
@@ -42,5 +49,4 @@ func seedDir(t *testing.T) string {
 	if _, err := store.CreateSession("beta", "empty"); err != nil {
 		t.Fatalf("create empty: %v", err)
 	}
-	return dir
 }
