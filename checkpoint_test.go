@@ -2,6 +2,8 @@ package elena_test
 
 import (
 	"errors"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -552,5 +554,84 @@ func TestBatchCommitRejectingOversizedPayloadFailsWhole(t *testing.T) {
 	}
 	if seq, err := sess.Append([]byte("no-hole")); err != nil || seq != 1 {
 		t.Fatalf("Append() after the failed commit = (%d, %v), want (1, nil)", seq, err)
+	}
+}
+
+// Checkpoint creation, listing, batch commits, and plain appends must
+// run concurrently without losing events or inventing duplicate
+// checkpoint IDs: every checkpoint lists alone under its own ID, and
+// the trajectory ends up holding every appended event exactly once.
+func TestConcurrentCheckpointsBatchesAndAppends(t *testing.T) {
+	st := openStore(t)
+	sess := createSession(t, st, "runs", "busy")
+	mustAppend(t, sess, "seed")
+
+	const appenders = 4
+	const perAppender = 10
+	const checkpoints = 6
+
+	var wg sync.WaitGroup
+	for g := 0; g < appenders; g++ {
+		wg.Add(1)
+		go func(g int) {
+			defer wg.Done()
+			for i := 0; i < perAppender; i++ {
+				if _, err := sess.Append([]byte(fmt.Sprintf("g%d-%d", g, i))); err != nil {
+					t.Errorf("Append() error: %v", err)
+					return
+				}
+			}
+		}(g)
+	}
+	for c := 0; c < checkpoints; c++ {
+		wg.Add(1)
+		go func(c int) {
+			defer wg.Done()
+			if c%2 == 0 {
+				if _, err := st.CreateCheckpoint(); err != nil {
+					t.Errorf("CreateCheckpoint() error: %v", err)
+					return
+				}
+				return
+			}
+			batch := st.NewBatch()
+			if err := batch.Append(sess, []byte("batch")); err != nil {
+				t.Errorf("batch Append() error: %v", err)
+				return
+			}
+			batch.Checkpoint()
+			if _, _, err := batch.Commit(); err != nil {
+				t.Errorf("batch Commit() error: %v", err)
+				return
+			}
+		}(c)
+	}
+	wg.Wait()
+
+	listed, err := st.Checkpoints()
+	if err != nil {
+		t.Fatalf("Checkpoints() failed: %v", err)
+	}
+	if len(listed) != checkpoints {
+		t.Fatalf("Checkpoints() returned %d checkpoints, want %d", len(listed), checkpoints)
+	}
+	for i, cp := range listed {
+		if cp.ID != uint64(i+1) {
+			t.Errorf("Checkpoints()[%d].ID = %d, want %d — every checkpoint must list alone under its own ID", i, cp.ID, i+1)
+		}
+	}
+
+	events, err := sess.Events()
+	if err != nil {
+		t.Fatalf("Events() failed: %v", err)
+	}
+	want := 1 + appenders*perAppender + checkpoints/2
+	if len(events) != want {
+		t.Fatalf("Events() returned %d events, want %d", len(events), want)
+	}
+	for i, ev := range events {
+		if ev.Seq != uint64(i+1) {
+			t.Fatalf("Events() position %d carries Seq = %d, want %d", i, ev.Seq, i+1)
+		}
 	}
 }
