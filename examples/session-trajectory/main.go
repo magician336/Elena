@@ -1,4 +1,4 @@
-// Session writes and replay — one perpetual session in one namespace,
+// Session writes and reads — one perpetual session in one namespace,
 // four appended events, the full trajectory read, and a point-in-time
 // read back to a known consistent sequence number. Sessions of this
 // shape suit agent trajectory streams, one appended event per
@@ -6,7 +6,7 @@
 //
 // Session demo, run with:
 //
-//	go run ./examples/session-write-replay [-dir DIR]
+//	go run ./examples/session-trajectory [-dir DIR]
 package main
 
 import (
@@ -27,7 +27,7 @@ func main() {
 
 	storeDir := *dir
 	if storeDir == "" {
-		temp, err := os.MkdirTemp("", "elena-session-replay-")
+		temp, err := os.MkdirTemp("", "elena-session-trajectory-")
 		if err != nil {
 			reportFailure(err)
 			os.Exit(1)
@@ -43,7 +43,7 @@ func main() {
 // reportFailure prints the demo's terminal error; stderr write failures
 // have nothing left to report to.
 func reportFailure(err error) {
-	_, _ = fmt.Fprintln(os.Stderr, "session replay demo failed:", err)
+	_, _ = fmt.Fprintln(os.Stderr, "session trajectory demo failed:", err)
 }
 
 // narrater carries the demo's narration writer and its first write
