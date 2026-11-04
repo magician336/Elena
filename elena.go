@@ -218,6 +218,11 @@ var ErrInvalidTTL = semantic.ErrInvalidTTL
 // option, WithSweepDisabled, not a period value.
 var ErrInvalidSweepPeriod = semantic.ErrInvalidSweepPeriod
 
+// ErrInvalidSyncPeriod is wrapped into the error Open returns when
+// WithSyncInterval is given a period that cannot define a flush
+// interval: zero or negative. The other sync tiers take no period.
+var ErrInvalidSyncPeriod = semantic.ErrInvalidSyncPeriod
+
 // ErrSessionExists is wrapped into the error the create calls return
 // when the named session already exists with a different lifecycle
 // form — perpetual against timed, in either direction. The lifecycle is

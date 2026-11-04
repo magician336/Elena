@@ -20,16 +20,22 @@ type OpenOption func(*openOptions)
 // openOptions accumulates the Open options into the semantic layer's
 // configuration. sweepPeriodSet distinguishes "caller asked for this
 // period" from "caller said nothing", so an explicit zero is rejected
-// instead of being read as the default.
+// instead of being read as the default. The sync fields hold the last
+// sync option given; the interval tier carries its period with it, so
+// no set flag is needed there.
 type openOptions struct {
 	sweepPeriod    time.Duration
 	sweepPeriodSet bool
 	sweepDisabled  bool
+	syncPolicy     semantic.SyncPolicy
+	syncPeriod     time.Duration
 }
 
 // config validates the accumulated options and returns the semantic
 // layer's configuration they amount to. The last sweep option wins, so
-// a period is validated only when it is what the store will use.
+// a period is validated only when it is what the store will use; the
+// last sync option wins the same way, and its period is validated by
+// the semantic layer, where the tier it belongs to is known.
 func (o *openOptions) config() (semantic.Config, error) {
 	if !o.sweepDisabled && o.sweepPeriodSet && o.sweepPeriod <= 0 {
 		return semantic.Config{}, fmt.Errorf("sweep period %d: %w", o.sweepPeriod, ErrInvalidSweepPeriod)
@@ -37,6 +43,8 @@ func (o *openOptions) config() (semantic.Config, error) {
 	return semantic.Config{
 		SweepPeriod:   o.sweepPeriod,
 		SweepDisabled: o.sweepDisabled,
+		SyncPolicy:    o.syncPolicy,
+		SyncPeriod:    o.syncPeriod,
 	}, nil
 }
 
@@ -64,5 +72,25 @@ func WithSweepPeriod(period time.Duration) OpenOption {
 func WithSweepDisabled() OpenOption {
 	return func(o *openOptions) {
 		o.sweepDisabled = true
+	}
+}
+
+// WithSyncInterval selects group commit: an append acknowledges after
+// the write alone, and a background flusher fdatasyncs the active data
+// file once per period, so the sync cost of many appends is shared
+// instead of paid per write. The period must be positive (an error
+// wrapping ErrInvalidSyncPeriod from Open otherwise).
+//
+// Durability semantics: an acknowledged event becomes durable at the
+// flush boundary that follows it — a machine-level fault can lose at
+// most one period of acknowledged events. The final flush is forced at
+// Close and at every rotation, so a store that was closed cleanly has
+// no open window. A process crash (SIGKILL) loses nothing: the bytes
+// are already in the OS page cache and still reach the disk. The
+// policy is fixed at Open, for the lifetime of the store.
+func WithSyncInterval(period time.Duration) OpenOption {
+	return func(o *openOptions) {
+		o.syncPolicy = semantic.SyncInterval
+		o.syncPeriod = period
 	}
 }
