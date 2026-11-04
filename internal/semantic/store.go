@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"elena/internal/engine"
 )
@@ -39,6 +40,13 @@ type Store struct {
 	// trajectories holds the runtime state of every session attached
 	// through this Store, keyed by namespace and session ID.
 	trajectories map[trajKey]*trajectory
+
+	// deadlines is the sweep's deadline view: the pending deadline of
+	// every timed session this store owes a merge for, keyed by
+	// namespace and session ID. Perpetual sessions never enter it. It is
+	// guarded by mu; entries leave when their deadline elapses and a
+	// merge — the sweep's or a manual Merge call — consumes the signal.
+	deadlines map[trajKey]time.Time
 }
 
 // Open opens the store rooted at dir, creating the directory if
@@ -58,6 +66,7 @@ func Open(dir string) (*Store, error) {
 	return &Store{
 		eng:          eng,
 		trajectories: make(map[trajKey]*trajectory),
+		deadlines:    make(map[trajKey]time.Time),
 	}, nil
 }
 

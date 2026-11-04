@@ -34,6 +34,18 @@ func (s *Store) Close() error {
 	return s.store.Close()
 }
 
+// Merge triggers one merge: the store's live entries are rewritten into
+// fresh data files while every expired entry is left out — that omission
+// is the physical reclamation. One Merge reclaims the bytes and index
+// memory of every elapsed session on disk — those the background sweep
+// tracks and any expired residue it never saw, for instance from before
+// the current Open. Visibility never moves: elapsed sessions read as if
+// never written before the merge and still do after it. Operations after
+// Close fail with an error wrapping ErrClosed.
+func (s *Store) Merge() error {
+	return s.store.Merge()
+}
+
 // Session is a handle to one session's trajectory. Handles obtained
 // from repeated CreateSession calls share the trajectory's state. All
 // methods are safe for use from multiple goroutines.
