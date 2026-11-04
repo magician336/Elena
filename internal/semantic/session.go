@@ -316,7 +316,9 @@ func (s *Store) lastSequence(key trajKey) (uint64, error) {
 // Append appends payload to the trajectory as its next event and
 // returns the event's sequence number, starting at 1. The payload is
 // copied and treated as opaque bytes; an acknowledged append is durable
-// the moment Append returns. An event of a timed session carries the
+// the moment Append returns under the default sync policy, and the
+// other tiers trade that away (see Config.SyncPolicy). An event of a
+// timed session carries the
 // session's deadline, so the whole trajectory turns invisible together;
 // appending once that deadline has passed fails with an error wrapping
 // ErrSessionEnded, and no sequence number is handed out for it.

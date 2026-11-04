@@ -30,6 +30,13 @@ type Store struct {
 // either way; the sweep governs only how promptly the bytes come back.
 // WithSweepPeriod tunes the period and WithSweepDisabled turns the
 // sweep off entirely.
+//
+// The sync policy — when acknowledged appends are made durable — is
+// chosen at Open and fixed for the store's lifetime. The default
+// fdatasyncs every append before it acknowledges; WithSyncInterval
+// shares that sync cost per period and WithSyncNone trades data-entry
+// durability for throughput, each with its loss window stated in the
+// option's doc comment.
 func Open(dir string, opts ...OpenOption) (*Store, error) {
 	var o openOptions
 	for _, opt := range opts {
@@ -48,12 +55,14 @@ func Open(dir string, opts ...OpenOption) (*Store, error) {
 	return &Store{store: store}, nil
 }
 
-// Close closes the store and releases its directory lock. Events
-// acknowledged before Close returns are durable. The background sweep,
-// if running, is joined first: its goroutine exits before Close
-// returns, and the first sweep failure it hit, if any, is reported
-// here. It is safe to call Close more than once; repeated calls are
-// no-ops.
+// Close closes the store and releases its directory lock. Under the
+// default sync policy events acknowledged before Close returns are
+// durable; the interval policy closes its window by forcing the final
+// flush at Close, and the none policy makes no durability claim (see
+// the sync options). The background sweep, if running, is joined
+// first: its goroutine exits before Close returns, and the first sweep
+// failure it hit, if any, is reported here. It is safe to call Close
+// more than once; repeated calls are no-ops.
 func (s *Store) Close() error {
 	return s.store.Close()
 }
@@ -122,11 +131,13 @@ func (s *Store) CreateSessionWithTTL(namespace, session string, ttl time.Duratio
 
 // Append appends payload to the trajectory as its next event and
 // returns the event's sequence number, starting at 1. The payload is
-// copied and treated as opaque bytes; an acknowledged append is durable
-// the moment Append returns. Appends from concurrent goroutines hand
-// out a hole-free, strictly increasing sequence. Appending to a timed
-// session whose TTL has elapsed fails with an error wrapping
-// ErrSessionEnded — the session already reads as if never written.
+// copied and treated as opaque bytes; under the default sync policy an
+// acknowledged append is durable the moment Append returns, and the
+// other tiers trade that away (see WithSyncInterval and WithSyncNone).
+// Appends from concurrent goroutines hand out a hole-free, strictly
+// increasing sequence. Appending to a timed session whose TTL has
+// elapsed fails with an error wrapping ErrSessionEnded — the session
+// already reads as if never written.
 func (sess *Session) Append(payload []byte) (uint64, error) {
 	return sess.session.Append(payload)
 }
@@ -217,6 +228,11 @@ var ErrInvalidTTL = semantic.ErrInvalidTTL
 // interval: zero or negative. Turning the sweep off is its own explicit
 // option, WithSweepDisabled, not a period value.
 var ErrInvalidSweepPeriod = semantic.ErrInvalidSweepPeriod
+
+// ErrInvalidSyncPeriod is wrapped into the error Open returns when
+// WithSyncInterval is given a period that cannot define a flush
+// interval: zero or negative. The other sync tiers take no period.
+var ErrInvalidSyncPeriod = semantic.ErrInvalidSyncPeriod
 
 // ErrSessionExists is wrapped into the error the create calls return
 // when the named session already exists with a different lifecycle
