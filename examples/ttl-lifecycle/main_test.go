@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-// Demo pacing for the test: a ttl of 400ms and a sweep period of
+// Sweep pacing for the test: a ttl of 400ms and a sweep period of
 // 1500ms leave a 1.1s window between the deadline (visibility turns)
 // and the first sweep check that can merge — the "expired but not yet
 // reclaimed" observation in between is safe, and both waits poll.
@@ -22,7 +22,7 @@ const (
 	testSweep = 1500 * time.Millisecond
 )
 
-// Narration is the demo's product, so the test pins both halves. The
+// Store narration is the demo's product, so the test pins both halves. The
 // visibility half: before the deadline the session and its events read
 // normally, after it the whole session reads as if never written —
 // events, single reads, listings, and appends alike — while the bytes
@@ -77,7 +77,7 @@ func TestRunNarratesBothHalvesOfTheTTLLifecycle(t *testing.T) {
 
 var occupancyPattern = regexp.MustCompile(`stats after the deadline: data bytes (\d+), unchanged from (\d+) `)
 
-// Narration lines open with a system signal — a store object or
+// Store narration lines open with a system signal — a store object or
 // operation — never with a person or a pitch (ADR-0001).
 func TestNarrationOpensWithSystemSignals(t *testing.T) {
 	allowed := []string{
@@ -96,7 +96,7 @@ func TestNarrationOpensWithSystemSignals(t *testing.T) {
 	}
 }
 
-// Narration is public copy: career-adjacent vocabulary and first-person
+// Store narration is public copy: career-adjacent vocabulary and first-person
 // voice never appear (ADR-0001 public-face rule). "Resume" the verb
 // (resume from a checkpoint) is systems vocabulary and stays allowed;
 // the career noun never appears in this codebase's copy.
@@ -109,10 +109,10 @@ func TestNarrationStaysOnSystemVocabulary(t *testing.T) {
 	}
 }
 
-// Runnability is the acceptance fact: go run . must start, narrate, and
-// exit zero. -ttl and -sweep shrink the pacing so the smoke run stays
-// quick; -dir points the demo at a temporary directory so it leaves
-// nothing behind.
+// go run is the acceptance fact: the example must start, narrate, and
+// exit zero under it. -ttl and -sweep shrink the pacing so the smoke
+// run stays quick; -dir points the demo at a temporary directory so it
+// leaves nothing behind.
 func TestGoRunSmoke(t *testing.T) {
 	if v := os.Getenv(skipGoRunEnv); v != "" {
 		t.Skipf("go run smoke disabled via %s=%q", skipGoRunEnv, v)

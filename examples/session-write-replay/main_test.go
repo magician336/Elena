@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// Narration is the demo's product, so the test pins its lines: the
+// Store narration is the demo's product, so the test pins its lines: the
 // session, every handed-out sequence number, the full read's four
 // events, and the point-in-time read's two, endpoint included. Append
 // timestamps follow the clock; every other printed fact is
@@ -44,7 +44,7 @@ func TestRunNarratesAppendsFullReadAndPointInTimeRead(t *testing.T) {
 	}
 }
 
-// Narration lines open with a system signal — a store object or
+// Store narration lines open with a system signal — a store object or
 // operation — never with a person or a pitch (ADR-0001).
 func TestNarrationOpensWithSystemSignals(t *testing.T) {
 	allowed := []string{
@@ -62,20 +62,22 @@ func TestNarrationOpensWithSystemSignals(t *testing.T) {
 	}
 }
 
-// Narration is public copy: career-adjacent vocabulary and first-person
-// voice never appear (ADR-0001 public-face rule).
+// Store narration is public copy: career-adjacent vocabulary and first-person
+// voice never appear (ADR-0001 public-face rule). "Resume" the verb
+// (resume from a checkpoint) is systems vocabulary and stays allowed;
+// the career noun never appears in this codebase's copy.
 func TestNarrationStaysOnSystemVocabulary(t *testing.T) {
 	lower := strings.ToLower(narrate(t))
-	for _, banned := range []string{"learn", "tutorial", "interview", "resume", "career", "hiring", "job", "we ", "you", "our "} {
+	for _, banned := range []string{"learn", "tutorial", "interview", "career", "hiring", "job", "we ", "you", "our "} {
 		if strings.Contains(lower, banned) {
 			t.Errorf("narration contains %q — public copy stays on system vocabulary", banned)
 		}
 	}
 }
 
-// Runnability is the acceptance fact: go run . must start, narrate, and
-// exit zero. -dir points the demo at a temporary directory so the
-// smoke run leaves nothing behind.
+// go run is the acceptance fact: the example must start, narrate, and
+// exit zero under it. -dir points the demo at a temporary directory so
+// the smoke run leaves nothing behind.
 func TestGoRunSmoke(t *testing.T) {
 	if v := os.Getenv(skipGoRunEnv); v != "" {
 		t.Skipf("go run smoke disabled via %s=%q", skipGoRunEnv, v)
