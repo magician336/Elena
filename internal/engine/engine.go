@@ -108,8 +108,10 @@ type Options struct {
 // Stats publishes and the handle lifecycle a merge interacts with.
 //
 // The entries count covers every encoded entry the file holds, live
-// and dead; it is guarded by Engine.mu (appends count under mu in the
-// write path, replay counts at Open).
+// and dead; it is an atomic because the append path increments it
+// outside the engine's global mutex (the sharded-index restructure
+// kept the write path off mu; see finishAppend), while replay counts
+// at Open and the merge swap sets whole-file totals.
 //
 // Handle lifecycle: while the file is in the engine's file set, Gets
 // read through it under mu and Scans may snapshot it. A merge that
@@ -123,10 +125,10 @@ type dataFile struct {
 	f *os.File
 
 	// entries and bytes are this file's entry count and size in bytes
-	// (live and dead entries alike); both are guarded by Engine.mu and
-	// maintained incrementally on append, at replay, and at merge.
-	entries uint64
-	bytes   int64
+	// (live and dead entries alike); both are atomics, maintained
+	// incrementally on append, at replay, and at merge.
+	entries atomic.Uint64
+	bytes   atomic.Int64
 
 	scanRefs  atomic.Int32
 	retired   atomic.Bool
@@ -157,8 +159,12 @@ func (df *dataFile) close() error {
 //
 // Concurrency model: single writer, many readers. writeMu serializes
 // appends to the active data file and the index publication order that
-// decides which entry wins; mu guards the index, the closed flag, and
-// reads of the data files. Lock order is always writeMu before mu.
+// decides which entry wins; mu guards the file set, the closed flag,
+// and reads of the data files. The index itself is sharded (see
+// shard.go): a publication locks only its key's shard, so appends never
+// take mu and readers of other shards never wait on them. Lock order is
+// always writeMu before mu before shard locks, and a holder of shard
+// locks alone never reaches for mu.
 type Engine struct {
 	dir      string
 	lockFile *os.File
@@ -166,7 +172,11 @@ type Engine struct {
 	files    map[uint32]*dataFile // open data files, keyed by file ID
 	activeID uint32               // file that receives appends; fixed after Open
 
-	activeOffset int64 // end of the active file; written only under writeMu
+	// activeOffset is the end of the active file: written only under
+	// writeMu (the single writer and the flusher/merge paths that hold
+	// writeMu), read lock-free by the write path. Atomic so the append
+	// accounting runs entirely without mu.
+	activeOffset atomic.Int64
 
 	maxKeySize      int
 	maxValueSize    int
@@ -179,13 +189,10 @@ type Engine struct {
 	syncPolicy SyncPolicy
 	syncPeriod time.Duration
 
-	index map[string]entryRef
-
-	// liveBytes is the encoded size of the entries the index points at,
-	// maintained incrementally (write path, replay, merge swap) so the
-	// dead share is computable in O(files) instead of O(keys). Guarded
-	// by mu.
-	liveBytes uint64
+	// index is the sharded key-to-location map. Its per-shard live-byte
+	// totals (liveTotal) maintain what a single liveBytes field once
+	// did, so the dead share stays computable in O(shards + files).
+	index indexShards
 
 	// Cumulative observables, published through Stats. The op counters
 	// tick on every public call; the byte counters tick only when bytes
@@ -203,7 +210,8 @@ type Engine struct {
 	// mergeMu serializes Merge calls; retired holds the handles of
 	// merged-away files that an in-flight scan still reads through
 	// (each closes when its last reader is done; Close is the
-	// backstop). Lock order: mergeMu before writeMu before mu.
+	// backstop). Lock order: mergeMu before writeMu before mu before
+	// shard locks.
 	mergeMu sync.Mutex
 	retired []*dataFile
 
@@ -258,7 +266,7 @@ func Open(dir string, opts Options) (*Engine, error) {
 		mergeDeadRatio:  opts.MergeDeadRatio,
 		syncPolicy:      opts.SyncPolicy,
 		syncPeriod:      opts.SyncPeriod,
-		index:           make(map[string]entryRef),
+		index:           newIndexShards(),
 	}
 	if eng.syncPeriod <= 0 {
 		eng.syncPeriod = defaultSyncPeriod

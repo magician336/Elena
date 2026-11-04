@@ -137,12 +137,15 @@ func (b *Batch) commitLocked() error {
 
 	e.mu.RLock()
 	closed := e.closed
-	offset := e.activeOffset
 	active := e.files[e.activeID]
 	e.mu.RUnlock()
 	if closed {
 		return ErrClosed
 	}
+	// Same writeMu-coherence argument as putExpires: this whole path
+	// holds the single writer's lock, so the atomic offset read and the
+	// handle capture cannot disagree.
+	offset := e.activeOffset.Load()
 	if active == nil {
 		return fmt.Errorf("engine: active data file %d not open for append", e.activeID)
 	}
@@ -179,20 +182,23 @@ func (b *Batch) commitLocked() error {
 	}
 	e.bytesWritten.Add(logical)
 
-	// One index publication: under mu, in staging order, so later ops
-	// in the batch win over earlier ones exactly as sequential single
-	// writes would.
+	// One index publication: every shard's write lock held together, in
+	// staging order inside, so later ops in the batch win over earlier
+	// ones exactly as sequential single writes would — and a concurrent
+	// snapshot sees the batch whole or not at all.
 	rotate := e.finishAppend(active, buf, uint64(len(b.ops)), func() {
-		off := offset
-		for i := range b.ops {
-			op := &b.ops[i]
-			if op.tombstone {
-				e.dropKey(op.key)
-			} else {
-				e.applyEntry(op.key, entryRef{fileID: e.activeID, offset: off, size: sizes[i]})
+		e.index.withAllLocked(func() {
+			off := offset
+			for i := range b.ops {
+				op := &b.ops[i]
+				if op.tombstone {
+					e.index.dropLocked(op.key)
+				} else {
+					e.index.applyLocked(op.key, entryRef{fileID: e.activeID, offset: off, size: sizes[i]})
+				}
+				off += int64(sizes[i])
 			}
-			off += int64(sizes[i])
-		}
+		})
 	})
 
 	b.ops = b.ops[:0] // the batch is spent; reuse starts empty

@@ -49,7 +49,7 @@ func (e *Engine) rotateActive() error {
 	e.mu.Lock()
 	e.files[next] = &dataFile{f: f}
 	e.activeID = next
-	e.activeOffset = 0
+	e.activeOffset.Store(0)
 	e.mu.Unlock()
 	return nil
 }

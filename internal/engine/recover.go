@@ -70,10 +70,13 @@ func (e *Engine) loadDataFile(id uint32) error {
 		}
 	}
 
-	e.files[id] = &dataFile{f: f, entries: uint64(hintedRecords + scanned), bytes: cleanOffset}
+	df := &dataFile{f: f}
+	df.entries.Store(uint64(hintedRecords + scanned))
+	df.bytes.Store(cleanOffset)
+	e.files[id] = df
 	// Files load in ascending ID order and the last one becomes the
 	// active file, so track its clean end as the append position.
-	e.activeOffset = cleanOffset
+	e.activeOffset.Store(cleanOffset)
 	return nil
 }
 
@@ -126,25 +129,20 @@ func (e *Engine) replayFile(f *os.File, id uint32, from int64) (int64, int, erro
 	return off, scanned, nil
 }
 
-// applyEntry publishes one replayed location for key, replacing any
-// previous location (last write wins) and keeping liveBytes exact.
-// Used by the replay paths, which apply entries in order. The caller
-// must hold mu (or run before the engine is shared).
+// applyEntry publishes one location for key, replacing any previous
+// location (last write wins) and keeping the index's live bytes exact.
+// Used by the write paths (which hold writeMu and apply entries in
+// order) and by the replay paths at Open; it takes only its key's
+// shard lock, so the caller needs no engine lock.
 func (e *Engine) applyEntry(key string, ref entryRef) {
-	if old, ok := e.index[key]; ok {
-		e.liveBytes -= uint64(old.size)
-	}
-	e.index[key] = ref
-	e.liveBytes += uint64(ref.size)
+	e.index.apply(key, ref)
 }
 
-// dropKey removes key's location if one exists (tombstone replay).
-// The caller must hold mu (or run before the engine is shared).
+// dropKey removes key's location if one exists (tombstone write or
+// replay). Like applyEntry it needs no engine lock: the shard lock is
+// taken here.
 func (e *Engine) dropKey(key string) {
-	if old, ok := e.index[key]; ok {
-		e.liveBytes -= uint64(old.size)
-		delete(e.index, key)
-	}
+	e.index.drop(key)
 }
 
 // createActive creates a brand-new data file for appends, syncs the
