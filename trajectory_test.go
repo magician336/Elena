@@ -164,7 +164,7 @@ func TestTrajectoriesStayIsolatedAcrossLabels(t *testing.T) {
 	}
 }
 
-// After Close, both read paths must fail with an error wrapping
+// After Close, every read path must fail with an error wrapping
 // ErrClosed, like the append path.
 func TestReadsAfterCloseReturnErrClosed(t *testing.T) {
 	dir := t.TempDir()
@@ -180,6 +180,9 @@ func TestReadsAfterCloseReturnErrClosed(t *testing.T) {
 
 	if _, err := sess.Events(); !errors.Is(err, elena.ErrClosed) {
 		t.Errorf("Events() after Close err = %v, want ErrClosed", err)
+	}
+	if _, err := sess.EventsUpTo(1); !errors.Is(err, elena.ErrClosed) {
+		t.Errorf("EventsUpTo(1) after Close err = %v, want ErrClosed", err)
 	}
 	if _, err := sess.Event(1); !errors.Is(err, elena.ErrClosed) {
 		t.Errorf("Event(1) after Close err = %v, want ErrClosed", err)
