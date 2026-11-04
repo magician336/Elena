@@ -62,3 +62,54 @@ func (s *Store) Checkpoints() ([]CheckpointInfo, error) {
 func (s *Store) Restore(id uint64) error {
 	return s.store.Restore(id)
 }
+
+// Batch accumulates appends and a checkpoint for one atomic commit: on
+// Commit, everything the batch carries — the whole group of events and
+// the baseline — is written as a single durable unit, one append and
+// one fdatasync, so it either survives as a whole or is not visible at
+// all. There is never a half group of events and never a half
+// checkpoint. A Batch is not safe for concurrent use by multiple
+// goroutines: it is its author's accumulation buffer. Create a fresh
+// batch for each group.
+type Batch struct {
+	batch *semantic.Batch
+}
+
+// NewBatch returns an empty batch bound to this store.
+func (s *Store) NewBatch() *Batch {
+	return &Batch{batch: s.store.NewBatch()}
+}
+
+// Append stages payload as the session's next event. Staged events
+// become durable and visible only when the batch commits; until then
+// they occupy no sequence number, so an abandoned or failed batch
+// leaves no hole in any trajectory. The payload is copied and treated
+// as opaque bytes. Staging fails when the handle belongs to another
+// store or the session's TTL has elapsed (an error wrapping
+// ErrSessionEnded).
+func (b *Batch) Append(sess *Session, payload []byte) error {
+	return b.batch.Append(sess.session, payload)
+}
+
+// Checkpoint stages a checkpoint of the whole store into this batch.
+// The manifest is written at Commit, after the batch's own events have
+// been given their sequence numbers, so it records them: the group of
+// events and its baseline become durable together.
+func (b *Batch) Checkpoint() {
+	b.batch.Checkpoint()
+}
+
+// Commit makes everything the batch holds durable in one atomic write.
+// It allocates the staged events' sequence numbers in staging order and
+// returns them; when a checkpoint was staged it also returns the
+// checkpoint's ID, and 0 otherwise. Sequence numbers are allocated, and
+// the trajectories' counters advance, only after the whole batch is
+// durable, so a failed commit leaves no hole behind. A commit fails
+// whole — with an error wrapping ErrSessionEnded when a staged session's
+// TTL has elapsed by commit time, ErrClosed after Close, or an error
+// for a payload beyond the storable size — and then nothing the batch
+// carried is visible: no event, no checkpoint. Commit clears the batch,
+// so it can be reused.
+func (b *Batch) Commit() ([]uint64, uint64, error) {
+	return b.batch.Commit()
+}

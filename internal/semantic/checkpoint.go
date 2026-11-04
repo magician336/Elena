@@ -175,7 +175,7 @@ func (s *Store) CreateCheckpoint() (uint64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	manifest, err := s.buildManifest()
+	manifest, err := s.buildManifest(nil)
 	if err != nil {
 		return 0, err
 	}
@@ -259,11 +259,12 @@ func (s *Store) Restore(id uint64) error {
 }
 
 // buildManifest collects the whole store's manifest: every live session
-// found on disk, with each trajectory's reached sequence number — the
-// greatest of the stored tail and this store's runtime counter, so
-// sequence numbers allocated to a committing batch are recorded too —
-// and each session's deadline. The caller holds s.mu.
-func (s *Store) buildManifest() (checkpointManifest, error) {
+// found on disk, with each trajectory's reached sequence number and each
+// session's deadline. pending holds sequence numbers a committing batch
+// has allocated but not yet made durable — nil outside a batch commit —
+// so a manifest written together with those events records them too.
+// The caller holds s.mu.
+func (s *Store) buildManifest(pending map[trajKey]uint64) (checkpointManifest, error) {
 	var manifest checkpointManifest
 	err := s.eng.Scan(engine.ScanOptions{Prefix: []byte{keyAreaSession}}, func(k, value []byte) error {
 		namespace, session, kind, ok := parseSessionKey(k)
@@ -278,7 +279,7 @@ func (s *Store) buildManifest() (checkpointManifest, error) {
 			return fmt.Errorf("elena: checkpoint manifest: %w", derr)
 		}
 		key := trajKey{namespace: namespace, session: session}
-		lastSeq, err := s.reachedSequence(key)
+		lastSeq, err := s.reachedSequence(key, pending)
 		if err != nil {
 			return err
 		}
@@ -298,15 +299,17 @@ func (s *Store) buildManifest() (checkpointManifest, error) {
 }
 
 // reachedSequence returns the sequence number a checkpoint records for
-// one trajectory: the greatest of the stored tail and this store's
-// runtime counter, so a manifest written while a batch is committing
-// records the sequence numbers the batch allocated. The runtime counter
-// never trails the stored tail. The caller holds s.mu.
-func (s *Store) reachedSequence(key trajKey) (uint64, error) {
+// one trajectory: the greatest of the stored tail, this store's runtime
+// counter, and any sequence number a committing batch has allocated
+// under pending — so a manifest written while a batch is committing
+// records the sequence numbers the batch is making durable. The runtime
+// counter never trails the stored tail. The caller holds s.mu.
+func (s *Store) reachedSequence(key trajKey, pending map[trajKey]uint64) (uint64, error) {
 	last := uint64(0)
 	if traj, ok := s.trajectories[key]; ok {
 		last = traj.lastSeq
 	}
+	last = max(last, pending[key])
 	stored, err := s.lastSequence(key)
 	if err != nil {
 		return 0, err
@@ -338,4 +341,159 @@ func (s *Store) nextCheckpointIDLocked() (uint64, error) {
 		return 0, fmt.Errorf("elena: create checkpoint: checkpoint IDs exhausted")
 	}
 	return highest + 1, nil
+}
+
+// errForeignSession marks a session handle used against a batch of a
+// store it does not belong to.
+var errForeignSession = errors.New("elena: session handle belongs to another store")
+
+// batchAppend is one append staged in a Batch: the trajectory to append
+// to and a copy of the payload.
+type batchAppend struct {
+	key     trajKey
+	payload []byte
+}
+
+// Batch accumulates appends and a checkpoint for one atomic commit:
+// everything a batch carries — the whole group of events and the
+// baseline — lands in one engine batch, one append and one fdatasync,
+// so it either survives as a whole or is not visible at all. There is
+// never a half checkpoint and never a half group of events. A Batch is
+// not safe for concurrent use by multiple goroutines: it is its
+// author's accumulation buffer.
+type Batch struct {
+	store            *Store
+	appends          []batchAppend
+	checkpointWanted bool
+}
+
+// NewBatch returns an empty batch bound to this store.
+func (s *Store) NewBatch() *Batch {
+	return &Batch{store: s}
+}
+
+// Append stages payload as the session's next event. Staged events
+// become durable and visible only when the batch commits; until then
+// they occupy no sequence number, so an abandoned or failed batch
+// leaves no hole in any trajectory. The payload is copied and treated
+// as opaque bytes. Staging fails when the handle belongs to another
+// store or the session's TTL has elapsed (an error wrapping
+// ErrSessionEnded).
+func (b *Batch) Append(sess *Session, payload []byte) error {
+	if sess.store != b.store {
+		return fmt.Errorf("elena: batch append to %q: %w", sess.key.display(), errForeignSession)
+	}
+	if uint64(len(payload)) > math.MaxUint32 {
+		return fmt.Errorf("elena: batch append to %q: %w", sess.key.display(), errPayloadTooLarge)
+	}
+
+	b.store.mu.Lock()
+	defer b.store.mu.Unlock()
+
+	traj, ok := b.store.trajectories[sess.key]
+	if !ok {
+		return fmt.Errorf("elena: batch append to %q: %w", sess.key.display(), errDetachedSession)
+	}
+	if traj.elapsed(time.Now()) {
+		return fmt.Errorf("elena: batch append to %q: %w", sess.key.display(), ErrSessionEnded)
+	}
+	b.appends = append(b.appends, batchAppend{key: sess.key, payload: append([]byte(nil), payload...)})
+	return nil
+}
+
+// Checkpoint stages a checkpoint of the whole store into this batch.
+// The manifest is written at Commit, after the batch's own events have
+// been given their sequence numbers, so it records them: the group and
+// its baseline become durable together.
+func (b *Batch) Checkpoint() {
+	b.checkpointWanted = true
+}
+
+// Commit turns everything the batch holds into one durable, atomic
+// write. It allocates the staged events' sequence numbers in staging
+// order and returns them; when a checkpoint was staged it also returns
+// the checkpoint's ID, and 0 otherwise. Sequence numbers are allocated
+// and the runtime counters advance only after the whole batch is
+// durable, so a failed commit leaves no hole behind. A commit fails
+// whole — with an error wrapping ErrSessionEnded when a staged session's
+// TTL has elapsed by commit time, ErrClosed after Close, or an error
+// for a payload beyond the storable size — and then nothing the batch
+// carried is visible: no event, no checkpoint. Commit clears the batch,
+// so it can be reused.
+func (b *Batch) Commit() ([]uint64, uint64, error) {
+	st := b.store
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	now := time.Now()
+	engineBatch := st.eng.NewBatch()
+	allocated := make(map[trajKey]uint64)
+	seqs := make([]uint64, 0, len(b.appends))
+	for _, op := range b.appends {
+		traj, ok := st.trajectories[op.key]
+		if !ok {
+			return nil, 0, fmt.Errorf("elena: batch append to %q: %w", op.key.display(), errDetachedSession)
+		}
+		if traj.elapsed(now) {
+			return nil, 0, fmt.Errorf("elena: batch append to %q: %w", op.key.display(), ErrSessionEnded)
+		}
+		if traj.lastSeq == math.MaxUint64 || allocated[op.key] == math.MaxUint64 {
+			return nil, 0, fmt.Errorf("elena: batch append to %q: %w", op.key.display(), errSequenceExhausted)
+		}
+		seq := max(traj.lastSeq, allocated[op.key]) + 1
+		value := encodeEnvelope(seq, now, op.payload)
+		if err := stageBatchEntry(engineBatch, eventKey(op.key.namespace, op.key.session, seq), value, traj.deadline); err != nil {
+			if errors.Is(err, ErrSessionEnded) {
+				return nil, 0, fmt.Errorf("elena: batch append to %q: %w", op.key.display(), err)
+			}
+			return nil, 0, opErr("commit batch", err)
+		}
+		allocated[op.key] = seq
+		seqs = append(seqs, seq)
+	}
+
+	var checkpointID uint64
+	if b.checkpointWanted {
+		manifest, err := st.buildManifest(allocated)
+		if err != nil {
+			return nil, 0, err
+		}
+		id, err := st.nextCheckpointIDLocked()
+		if err != nil {
+			return nil, 0, err
+		}
+		if err := engineBatch.Put(checkpointKey(id), encodeManifest(manifest)); err != nil {
+			return nil, 0, opErr("commit batch", err)
+		}
+		checkpointID = id
+	}
+
+	if err := engineBatch.Commit(); err != nil {
+		return nil, 0, opErr("commit batch", err)
+	}
+	for key, seq := range allocated {
+		st.trajectories[key].lastSeq = seq
+	}
+	b.appends = nil
+	b.checkpointWanted = false
+	return seqs, checkpointID, nil
+}
+
+// stageBatchEntry stages one session entry into the engine batch:
+// perpetually live when the deadline is the zero time, or carrying the
+// session's deadline through the engine's TTL primitive — the batch's
+// single durable append rides them all. A deadline the engine rejects
+// maps to ErrSessionEnded, so engine vocabulary never leaks through the
+// semantic layer.
+func stageBatchEntry(batch *engine.Batch, key, value []byte, deadline time.Time) error {
+	if deadline.IsZero() {
+		return batch.Put(key, value)
+	}
+	if err := batch.PutWithTTL(key, value, time.Until(deadline)); err != nil {
+		if errors.Is(err, engine.ErrInvalidTTL) {
+			return ErrSessionEnded
+		}
+		return err
+	}
+	return nil
 }

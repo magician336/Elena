@@ -296,3 +296,261 @@ func TestRestoreKeepsTimedSessionsOriginalDeadline(t *testing.T) {
 		t.Errorf("Append() after the original deadline err = %v, want ErrSessionEnded", err)
 	}
 }
+
+// A batch must be able to carry a group of events and a checkpoint in
+// one atomic commit: one Commit makes the whole group and the baseline
+// durable together, the checkpoint's manifest recording the group's own
+// sequence numbers, and both readable after a reopen.
+func TestBatchCommitsEventsAndCheckpointTogether(t *testing.T) {
+	dir := t.TempDir()
+
+	st, err := elena.Open(dir)
+	if err != nil {
+		t.Fatalf("first Open(%q) failed: %v", dir, err)
+	}
+	sess := createSession(t, st, "runs", "alpha")
+	mustAppend(t, sess, "before-batch")
+
+	batch := st.NewBatch()
+	for _, payload := range []string{"batch-a", "batch-b"} {
+		if err := batch.Append(sess, []byte(payload)); err != nil {
+			t.Fatalf("batch Append(%q) failed: %v", payload, err)
+		}
+	}
+	batch.Checkpoint()
+	seqs, id, err := batch.Commit()
+	if err != nil {
+		t.Fatalf("batch Commit() failed: %v", err)
+	}
+	if len(seqs) != 2 || seqs[0] != 2 || seqs[1] != 3 {
+		t.Fatalf("batch Commit() seqs = %v, want [2 3]", seqs)
+	}
+	if id == 0 {
+		t.Fatal("batch Commit() checkpoint ID = 0, want the staged checkpoint's ID")
+	}
+
+	checkpoints, err := st.Checkpoints()
+	if err != nil {
+		t.Fatalf("Checkpoints() failed: %v", err)
+	}
+	if len(checkpoints) != 1 || checkpoints[0].ID != id {
+		t.Fatalf("Checkpoints() = %v, want the committed checkpoint %d alone", checkpoints, id)
+	}
+	events, err := sess.Events()
+	if err != nil {
+		t.Fatalf("Events() after the batch failed: %v", err)
+	}
+	if len(events) != 3 {
+		t.Fatalf("Events() after the batch returned %d events, want 3", len(events))
+	}
+	if err := st.Close(); err != nil {
+		t.Fatalf("Close() failed: %v", err)
+	}
+
+	// The manifest recorded the batch's own events: restoring to it in a
+	// fresh process continues right behind them.
+	reopened, err := elena.Open(dir)
+	if err != nil {
+		t.Fatalf("second Open(%q) failed: %v", dir, err)
+	}
+	defer closeStore(t, reopened)
+	if err := reopened.Restore(id); err != nil {
+		t.Fatalf("Restore(%d) failed: %v", id, err)
+	}
+	restored := createSession(t, reopened, "runs", "alpha")
+	if seq, err := restored.Append([]byte("after-restore")); err != nil || seq != 4 {
+		t.Fatalf("Append() after restore to the batch checkpoint = (%d, %v), want (4, nil)", seq, err)
+	}
+}
+
+// A batch without a staged checkpoint commits its events alone: no
+// checkpoint appears, and the returned checkpoint ID is zero.
+func TestBatchWithoutCheckpointCommitsEventsAlone(t *testing.T) {
+	st := openStore(t)
+	sess := createSession(t, st, "runs", "alpha")
+
+	batch := st.NewBatch()
+	if err := batch.Append(sess, []byte("event")); err != nil {
+		t.Fatalf("batch Append() failed: %v", err)
+	}
+	seqs, id, err := batch.Commit()
+	if err != nil {
+		t.Fatalf("batch Commit() failed: %v", err)
+	}
+	if len(seqs) != 1 || seqs[0] != 1 {
+		t.Fatalf("batch Commit() seqs = %v, want [1]", seqs)
+	}
+	if id != 0 {
+		t.Fatalf("batch Commit() checkpoint ID = %d, want 0 for no staged checkpoint", id)
+	}
+	checkpoints, err := st.Checkpoints()
+	if err != nil {
+		t.Fatalf("Checkpoints() failed: %v", err)
+	}
+	if len(checkpoints) != 0 {
+		t.Fatalf("Checkpoints() after a checkpoint-less batch = %v, want none", checkpoints)
+	}
+}
+
+// A commit attempted after Close must fail whole: no staged event
+// becomes visible and no half checkpoint is left behind — the group and
+// the baseline either survive together or do not exist at all.
+func TestBatchCommitAfterCloseLeavesNothing(t *testing.T) {
+	dir := t.TempDir()
+
+	st, err := elena.Open(dir)
+	if err != nil {
+		t.Fatalf("first Open(%q) failed: %v", dir, err)
+	}
+	sess := createSession(t, st, "runs", "alpha")
+	mustAppend(t, sess, "before-batch")
+
+	batch := st.NewBatch()
+	if err := batch.Append(sess, []byte("batch")); err != nil {
+		t.Fatalf("batch Append() failed: %v", err)
+	}
+	batch.Checkpoint()
+	if err := st.Close(); err != nil {
+		t.Fatalf("Close() failed: %v", err)
+	}
+	if _, _, err := batch.Commit(); !errors.Is(err, elena.ErrClosed) {
+		t.Fatalf("batch Commit() after Close err = %v, want ErrClosed", err)
+	}
+
+	reopened, err := elena.Open(dir)
+	if err != nil {
+		t.Fatalf("second Open(%q) failed: %v", dir, err)
+	}
+	defer closeStore(t, reopened)
+	checkpoints, err := reopened.Checkpoints()
+	if err != nil {
+		t.Fatalf("Checkpoints() after the failed commit failed: %v", err)
+	}
+	if len(checkpoints) != 0 {
+		t.Fatalf("Checkpoints() after the failed commit = %v, want none — no half checkpoint", checkpoints)
+	}
+	sess2 := createSession(t, reopened, "runs", "alpha")
+	events, err := sess2.Events()
+	if err != nil {
+		t.Fatalf("Events() after the failed commit failed: %v", err)
+	}
+	if len(events) != 1 || string(events[0].Payload) != "before-batch" {
+		t.Fatalf("Events() after the failed commit = %v, want the one pre-batch event alone", events)
+	}
+}
+
+// A session whose TTL elapses between staging and commit must fail the
+// whole commit with ErrSessionEnded: none of the batch's events — not
+// even those of other, still-live sessions — may become visible, and no
+// checkpoint may appear. The aborted commit allocates no sequence
+// numbers, so the live session's next append continues without a hole.
+func TestBatchCommitAfterTTLElapseFailsWhole(t *testing.T) {
+	st := openStore(t)
+	const ttl = 300 * time.Millisecond
+
+	keeper := createSession(t, st, "runs", "keeper")
+	expiring := createTimedSession(t, st, "runs", "expiring", ttl)
+	mustAppend(t, keeper, "before-batch")
+	mustAppend(t, expiring, "before-batch")
+
+	batch := st.NewBatch()
+	if err := batch.Append(keeper, []byte("batch")); err != nil {
+		t.Fatalf("batch Append() to the perpetual session failed: %v", err)
+	}
+	if err := batch.Append(expiring, []byte("batch")); err != nil {
+		t.Fatalf("batch Append() to the timed session failed: %v", err)
+	}
+	batch.Checkpoint()
+	waitForTTLElapse(ttl)
+
+	if _, _, err := batch.Commit(); !errors.Is(err, elena.ErrSessionEnded) {
+		t.Fatalf("batch Commit() after the TTL elapsed err = %v, want ErrSessionEnded", err)
+	}
+	events, err := keeper.Events()
+	if err != nil {
+		t.Fatalf("Events() of the perpetual session failed: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("Events() of the perpetual session after the aborted commit returned %d events, want 1", len(events))
+	}
+	checkpoints, err := st.Checkpoints()
+	if err != nil {
+		t.Fatalf("Checkpoints() failed: %v", err)
+	}
+	if len(checkpoints) != 0 {
+		t.Fatalf("Checkpoints() after the aborted commit = %v, want none", checkpoints)
+	}
+	if seq, err := keeper.Append([]byte("no-hole")); err != nil || seq != 2 {
+		t.Fatalf("Append() after the aborted commit = (%d, %v), want (2, nil)", seq, err)
+	}
+}
+
+// Staging failures must leave nothing behind: an append rejected at
+// staging allocates no sequence number, so the trajectory continues
+// without a hole, and the store holds no checkpoint.
+func TestBatchStagingFailuresLeaveNoTrace(t *testing.T) {
+	st := openStore(t)
+	other := openStore(t)
+	sess := createSession(t, st, "runs", "alpha")
+	foreign := createSession(t, other, "runs", "alpha")
+
+	if err := st.NewBatch().Append(foreign, []byte("event")); err == nil {
+		t.Error("batch Append() of another store's session handle must fail")
+	}
+	batch := st.NewBatch()
+	if err := batch.Append(sess, []byte("kept")); err != nil {
+		t.Fatalf("batch Append() after the rejection failed: %v", err)
+	}
+	if _, id, err := batch.Commit(); err != nil || id != 0 {
+		t.Fatalf("batch Commit() = (id %d, %v), want (0, nil)", id, err)
+	}
+	if seq, err := sess.Append([]byte("no-hole")); err != nil || seq != 2 {
+		t.Fatalf("Append() after the batch = (%d, %v), want (2, nil) — staging must allocate nothing", seq, err)
+	}
+	checkpoints, err := st.Checkpoints()
+	if err != nil {
+		t.Fatalf("Checkpoints() failed: %v", err)
+	}
+	if len(checkpoints) != 0 {
+		t.Fatalf("Checkpoints() = %v, want none", checkpoints)
+	}
+}
+
+// A payload beyond the storable size becomes an error only at commit —
+// the size verdict is the engine's — and the commit must fail whole:
+// no event of the batch visible, no checkpoint left, and no sequence
+// number burned.
+func TestBatchCommitRejectingOversizedPayloadFailsWhole(t *testing.T) {
+	st := openStore(t)
+	sess := createSession(t, st, "runs", "alpha")
+
+	batch := st.NewBatch()
+	if err := batch.Append(sess, []byte("would-have-been-first")); err != nil {
+		t.Fatalf("batch Append() before the size verdict failed: %v", err)
+	}
+	if err := batch.Append(sess, make([]byte, 4<<20+64)); err != nil {
+		t.Fatalf("batch Append() of the oversized payload must stage, not fail early: %v", err)
+	}
+	batch.Checkpoint()
+	if _, _, err := batch.Commit(); err == nil || errors.Is(err, elena.ErrClosed) {
+		t.Fatalf("batch Commit() with an oversized payload err = %v, want a size error", err)
+	}
+
+	events, err := sess.Events()
+	if err != nil {
+		t.Fatalf("Events() after the failed commit failed: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("Events() after the failed commit returned %d events, want 0", len(events))
+	}
+	checkpoints, err := st.Checkpoints()
+	if err != nil {
+		t.Fatalf("Checkpoints() failed: %v", err)
+	}
+	if len(checkpoints) != 0 {
+		t.Fatalf("Checkpoints() after the failed commit = %v, want none", checkpoints)
+	}
+	if seq, err := sess.Append([]byte("no-hole")); err != nil || seq != 1 {
+		t.Fatalf("Append() after the failed commit = (%d, %v), want (1, nil)", seq, err)
+	}
+}
