@@ -19,8 +19,10 @@ elena number is taken off the public surface an embedded host uses.
 | --- | --- |
 | `driver.go` | the `Driver` lifecycle and the name registry (`bench.For`) |
 | `workload.go` | the operation language and the micro workload builder |
-| `metrics.go` | per-operation latency collection and the throughput math |
+| `generator.go` | the seeded mixed-workload generator: declared read/write ratio, uniform or Zipf key distribution |
+| `metrics.go` | per-operation latency collection, the throughput math, and nearest-rank quantiles (P50/P99/P999) |
 | `harness.go` | phase orchestration and per-phase result collection |
+| `report.go` | deterministic rendering of results: markdown report plus raw JSON |
 | `elena_driver.go` | elena through the public library API |
 | `bbolt_driver.go` | bbolt through its official Go package |
 | `cmd/bench` | the CLI: one engine, one micro workload, printed numbers |
@@ -31,9 +33,13 @@ One `bench.Run` opens the driver in a fresh directory, then drives each
 workload phase in order: the phase's wall-clock span times its
 throughput, every single operation gets its own latency observation,
 and the driver is closed even when an operation fails. Latency samples
-stay in the collector in full resolution — count, min, max, and mean
-summarize them today, and percentile summaries (P50/P99/P999) will
-derive from the same sample stream rather than a lossy aggregate.
+stay in the collector in full resolution, and every summary reads the
+original measurements: count, min, max, mean, and the P50/P99/P999
+trio by the nearest-rank method (`bench.Quantile` ranks a private
+ascending copy and returns the observed sample at rank `ceil(p*n)` —
+never an interpolated value; samples too few for a rank to resolve
+below the maximum degrade to the maximum, explicitly). Reports print
+the percentile trio, not averages: tail latency is the claim.
 
 The micro workload is one append phase over `count` fresh keys, then
 one read phase over the same keys — sequential keys, 8-byte encodings,
@@ -41,6 +47,37 @@ deterministic values regenerated identically from the same arguments.
 The shape mirrors the official `bbolt bench` tool's sequential write
 and read modes, which is what lets the anchor below compare like with
 like.
+
+## Generated workloads
+
+`bench.Generate` builds a mixed phase from a declared spec: operation
+count, read share, key space, key distribution (uniform, or truncated
+Zipf shaped by theta — YCSB's zipfian default is 0.99), value size,
+and a seed. The generated stream carries exactly
+`round(Ops*ReadRatio)` reads shuffled through the appends, keys whose
+measured frequencies equal the declared distribution (held by
+statistical pins at five sigmas of the binomial spread), and values
+derived from key and write ordinal, so repeated writes of a key never
+share a payload. One seed selects the whole sequence: the same spec
+regenerates the identical workload every time.
+
+A generated phase is a composition unit, not a runnable claim about
+key coverage: a mixed phase may read a key before writing it, exactly
+as YCSB separates a load phase (pure appends that populate the key
+space) from a run phase (the declared mix). Callers compose the two
+into one `Workload` — load phases first, run phases behind — and the
+assembly runs through the same `bench.Run` lifecycle as the micro
+workload.
+
+## Reports
+
+`bench.RenderMarkdown` and `bench.RenderJSON` turn result slices into
+the two report forms: a markdown table — one row per phase, latency as
+P50/P99/P999 plus min and max — and a raw JSON document with fixed
+field names in fixed order and nanosecond durations, the shape two
+runs diff line by line. Rendering is a pure function of the numbers:
+no clocks, no engine knowledge, same input → same bytes, every time.
+Neither form prints a mean.
 
 ### Durability alignment
 
