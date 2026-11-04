@@ -4,6 +4,8 @@
 package elena
 
 import (
+	"time"
+
 	"elena/internal/semantic"
 )
 
@@ -61,9 +63,54 @@ func (sess *Session) Append(payload []byte) (uint64, error) {
 	return sess.session.Append(payload)
 }
 
+// Event is one immutable append to a trajectory, read back
+// self-describing: the sequence number and the append time travel with
+// the payload.
+type Event struct {
+	// Seq is the event's sequence number, assigned at append time,
+	// starting at 1 and increasing by one per event.
+	Seq uint64
+
+	// AppendedAt is when the event was appended.
+	AppendedAt time.Time
+
+	// Payload is the caller-supplied bytes, stored and returned
+	// unmodified.
+	Payload []byte
+}
+
+// Events returns every event of the trajectory in sequence order. The
+// read is a snapshot: events appended after it starts are not included.
+func (sess *Session) Events() ([]Event, error) {
+	inner, err := sess.session.Events()
+	if err != nil {
+		return nil, err
+	}
+	events := make([]Event, len(inner))
+	for i, ev := range inner {
+		events[i] = Event{Seq: ev.Seq, AppendedAt: ev.AppendedAt, Payload: ev.Payload}
+	}
+	return events, nil
+}
+
+// Event returns the single event with the given sequence number, or an
+// error wrapping ErrEventNotFound when the trajectory holds no such
+// event.
+func (sess *Session) Event(seq uint64) (Event, error) {
+	inner, err := sess.session.Event(seq)
+	if err != nil {
+		return Event{}, err
+	}
+	return Event{Seq: inner.Seq, AppendedAt: inner.AppendedAt, Payload: inner.Payload}, nil
+}
+
 // ErrDirectoryLocked is wrapped into the error Open returns when the
 // directory is already held by another open store.
 var ErrDirectoryLocked = semantic.ErrDirectoryLocked
+
+// ErrEventNotFound is wrapped into the error Event returns when the
+// trajectory holds no event with the requested sequence number.
+var ErrEventNotFound = semantic.ErrEventNotFound
 
 // ErrInvalidLabel is wrapped into the error CreateSession returns when
 // the namespace or the session ID is empty or too long.

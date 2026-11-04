@@ -26,6 +26,13 @@ const (
 // envelope validation at read time.
 var errCorruptedEvent = errors.New("elena: corrupted trajectory event")
 
+// envelope is the decoded form of an event's stored value bytes.
+type envelope struct {
+	sequence   uint64
+	appendedAt time.Time
+	payload    []byte
+}
+
 // encodeEnvelope returns the envelope for the event with the given
 // sequence number, append time, and payload. The payload is copied.
 func encodeEnvelope(seq uint64, appendedAt time.Time, payload []byte) []byte {
@@ -36,4 +43,23 @@ func encodeEnvelope(seq uint64, appendedAt time.Time, payload []byte) []byte {
 	binary.BigEndian.PutUint32(value[17:], uint32(len(payload)))
 	copy(value[envelopeHeaderSize:], payload)
 	return value
+}
+
+// decodeEnvelope validates and decodes an event's stored value bytes,
+// reporting errCorruptedEvent for anything that is not an envelope of
+// the known version with a consistent payload length. The payload is
+// copied, so the caller may reuse the value slice.
+func decodeEnvelope(value []byte) (envelope, error) {
+	if len(value) < envelopeHeaderSize || value[0] != envelopeVersion {
+		return envelope{}, errCorruptedEvent
+	}
+	sequence := binary.BigEndian.Uint64(value[1:])
+	appendedAt := time.Unix(0, int64(binary.BigEndian.Uint64(value[9:])))
+	payloadLen := binary.BigEndian.Uint32(value[17:])
+	if uint64(envelopeHeaderSize)+uint64(payloadLen) != uint64(len(value)) {
+		return envelope{}, errCorruptedEvent
+	}
+	payload := make([]byte, payloadLen)
+	copy(payload, value[envelopeHeaderSize:])
+	return envelope{sequence: sequence, appendedAt: appendedAt, payload: payload}, nil
 }
