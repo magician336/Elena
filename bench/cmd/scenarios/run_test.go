@@ -71,6 +71,31 @@ func TestScenariosRunTTLSmoke(t *testing.T) {
 	}
 }
 
+// TestScenariosRunCurveSmoke drives the throughput-concurrency curve
+// end to end on smoke scale: the rendered curve table out, the raw
+// JSON report on disk.
+func TestScenariosRunCurveSmoke(t *testing.T) {
+	jsonOut := filepath.Join(t.TempDir(), "curve.json")
+	code, stdout, stderr := runForTest(t,
+		"--scenario", "curve",
+		"--concurrency", "1,2", "--ops-per-worker", "8", "--value-size", "64",
+		"--json-out", jsonOut,
+	)
+	if code != 0 {
+		t.Fatalf("Run exit = %d, stderr = %q", code, stderr)
+	}
+	if !strings.Contains(stdout, "elena-concurrency-curve") {
+		t.Fatalf("stdout missing the curve header:\n%s", stdout)
+	}
+	doc, err := os.ReadFile(jsonOut)
+	if err != nil {
+		t.Fatalf("read json report: %v", err)
+	}
+	if !strings.Contains(string(doc), `"sync_tier"`) {
+		t.Fatalf("json report missing the sync tier field:\n%s", doc)
+	}
+}
+
 // TestScenariosRunUsageErrors pins the argument contract: a missing
 // scenario and an existing directory are wrong asks, exit code 2.
 func TestScenariosRunUsageErrors(t *testing.T) {
