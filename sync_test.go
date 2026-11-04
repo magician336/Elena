@@ -127,3 +127,153 @@ func TestSyncTiersAcknowledgeAndRecoverAcrossReopen(t *testing.T) {
 		})
 	}
 }
+
+// Sync options apply in the order given, so the last one wins — and
+// the interval tier's period validation lands with it: a non-positive
+// period is rejected only when interval is the tier the store will
+// actually use, and a later always or none option overrides an invalid
+// interval one entirely.
+func TestSyncOptionsLastOneWins(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		opts    []elena.OpenOption
+		wantErr bool
+	}{
+		{
+			name: "invalid-interval-then-always",
+			opts: []elena.OpenOption{elena.WithSyncInterval(0), elena.WithSyncAlways()},
+		},
+		{
+			name: "invalid-interval-then-none",
+			opts: []elena.OpenOption{elena.WithSyncInterval(-time.Second), elena.WithSyncNone()},
+		},
+		{
+			name: "valid-interval-then-always",
+			opts: []elena.OpenOption{elena.WithSyncInterval(time.Hour), elena.WithSyncAlways()},
+		},
+		{
+			name:    "always-then-invalid-interval",
+			opts:    []elena.OpenOption{elena.WithSyncAlways(), elena.WithSyncInterval(0)},
+			wantErr: true,
+		},
+		{
+			name:    "none-then-invalid-interval",
+			opts:    []elena.OpenOption{elena.WithSyncNone(), elena.WithSyncInterval(-time.Second)},
+			wantErr: true,
+		},
+		{
+			name:    "valid-interval-then-invalid-interval",
+			opts:    []elena.OpenOption{elena.WithSyncInterval(time.Hour), elena.WithSyncInterval(0)},
+			wantErr: true,
+		},
+		{
+			name: "invalid-interval-then-valid-interval",
+			opts: []elena.OpenOption{elena.WithSyncInterval(0), elena.WithSyncInterval(time.Hour)},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			st, err := elena.Open(t.TempDir(), tt.opts...)
+			if tt.wantErr {
+				if !errors.Is(err, elena.ErrInvalidSyncPeriod) {
+					t.Errorf("Open err = %v, want ErrInvalidSyncPeriod", err)
+				}
+				if st != nil {
+					closeStore(t, st)
+					t.Error("Open must not return a store on failure")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Open failed: %v", err)
+			}
+			closeStore(t, st)
+		})
+	}
+}
+
+// The sync policy is a property of one Open, never of the directory:
+// nothing tier-shaped is encoded on disk, so a directory written under
+// one tier reopens under any other and every acknowledged event reads
+// back through each of them.
+func TestSyncTierChoiceIsPerOpenNotPerDirectory(t *testing.T) {
+	dir := t.TempDir()
+
+	st, err := elena.Open(dir, elena.WithSyncInterval(time.Hour))
+	if err != nil {
+		t.Fatalf("Open under interval failed: %v", err)
+	}
+	underInterval := createSession(t, st, "runs", "writer")
+	mustAppend(t, underInterval, "event-1")
+	mustAppend(t, underInterval, "event-2")
+	if err := st.Close(); err != nil {
+		t.Fatalf("Close under interval failed: %v", err)
+	}
+
+	underNone, err := elena.Open(dir, elena.WithSyncNone())
+	if err != nil {
+		t.Fatalf("reopen under none failed: %v", err)
+	}
+	resumed := createSession(t, underNone, "runs", "writer")
+	events, err := resumed.Events()
+	if err != nil || len(events) != 2 {
+		t.Fatalf("Events() under none = (%d events, %v), want (2, nil)", len(events), err)
+	}
+	mustAppend(t, resumed, "event-3")
+	if err := underNone.Close(); err != nil {
+		t.Fatalf("Close under none failed: %v", err)
+	}
+
+	underDefault, err := elena.Open(dir)
+	if err != nil {
+		t.Fatalf("reopen under the default tier failed: %v", err)
+	}
+	defer closeStore(t, underDefault)
+	final := createSession(t, underDefault, "runs", "writer")
+	events, err = final.Events()
+	if err != nil {
+		t.Fatalf("Events() under the default tier failed: %v", err)
+	}
+	for i, ev := range events {
+		if ev.Seq != uint64(i+1) {
+			t.Fatalf("event %d under the default tier has sequence %d, want %d", i, ev.Seq, i+1)
+		}
+	}
+	if len(events) != 3 {
+		t.Fatalf("Events() under the default tier returned %d events, want 3", len(events))
+	}
+}
+
+// The interval tier's flusher and the background sweep are two
+// goroutines over one store: deadlines elapse, the sweep merges, the
+// flusher keeps syncing the active file the merge rotates in and out
+// from under it, and Close joins both before releasing the directory —
+// the reopen right after Close is the observable proof of the joins.
+func TestSweepRunsUnderSyncInterval(t *testing.T) {
+	dir := t.TempDir()
+	st, err := elena.Open(dir,
+		elena.WithSyncInterval(time.Millisecond),
+		elena.WithSweepPeriod(25*time.Millisecond),
+	)
+	if err != nil {
+		t.Fatalf("Open(interval, sweep) failed: %v", err)
+	}
+
+	const ttl = 300 * time.Millisecond
+	temp := createTimedSession(t, st, "runs", "temp", ttl)
+	for i := 0; i < 3; i++ {
+		mustAppend(t, temp, "event")
+	}
+
+	waitForStats(t, st, "the sweep to reclaim the elapsed session under interval", func(s elena.Stats) bool {
+		return s.LiveEntries == 0 && s.DataBytes == 0
+	})
+
+	if err := st.Close(); err != nil {
+		t.Fatalf("Close under interval with the sweep running failed: %v", err)
+	}
+	reopened, err := elena.Open(dir, elena.WithSyncInterval(time.Millisecond))
+	if err != nil {
+		t.Fatalf("Open right after Close failed: %v — a background goroutine outlived its store", err)
+	}
+	closeStore(t, reopened)
+}
