@@ -1,7 +1,6 @@
 package bench
 
 import (
-	"encoding/binary"
 	"fmt"
 	"path/filepath"
 	"time"
@@ -18,9 +17,10 @@ var bboltBucket = []byte("bench")
 const bboltLockTimeout = 5 * time.Second
 
 // bboltDriver drives bbolt through its official Go package. Mapping:
-// one logical key is one 8-byte big-endian bucket key — the same width
-// the official bbolt bench tool uses — an append is a bucket put, a
-// read a bucket get.
+// one logical key is one 8-byte big-endian bucket key — the common
+// encoding every KV driver here uses, the same width the official
+// bbolt bench tool's keys carry — an append is a bucket put, a read a
+// bucket get.
 //
 // Durability: every append runs as its own write transaction with
 // bbolt's default synchronization — a committed transaction is synced
@@ -68,7 +68,7 @@ func (d *bboltDriver) Do(op Op) error {
 	switch op.Kind {
 	case OpAppend:
 		err := d.db.Update(func(tx *bolt.Tx) error {
-			return tx.Bucket(bboltBucket).Put(bboltKey(op.Key), op.Value)
+			return tx.Bucket(bboltBucket).Put(kvKey(op.Key), op.Value)
 		})
 		if err != nil {
 			return err
@@ -81,7 +81,7 @@ func (d *bboltDriver) Do(op Op) error {
 			return fmt.Errorf("read of key %d with no acknowledged append", op.Key)
 		}
 		return d.db.View(func(tx *bolt.Tx) error {
-			value := tx.Bucket(bboltBucket).Get(bboltKey(op.Key))
+			value := tx.Bucket(bboltBucket).Get(kvKey(op.Key))
 			if value == nil {
 				return fmt.Errorf("read of key %d returned nothing", op.Key)
 			}
@@ -99,12 +99,4 @@ func (d *bboltDriver) Do(op Op) error {
 // closed-database errors.
 func (d *bboltDriver) Close() error {
 	return d.db.Close()
-}
-
-// bboltKey renders one logical key as its 8-byte big-endian bucket
-// key.
-func bboltKey(key uint64) []byte {
-	buf := make([]byte, 8)
-	binary.BigEndian.PutUint64(buf, key)
-	return buf
 }
