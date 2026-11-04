@@ -30,8 +30,15 @@ elena number is taken off the public surface an embedded host uses.
 | `bbolt_driver.go` | bbolt through its official Go package |
 | `badger_driver.go` | badger through its official Go package |
 | `rosedb_driver.go` | rosedb through its official Go package |
+| `seed.go` | the shared dataset builder behind the focused-metric scenarios |
+| `merge_curve.go` | the merge-curve scenario: latency over time across one explicit merge |
+| `startup_pair.go` | paired startup timing: hint files in place vs removed from the same dataset |
+| `index_memory.go` | per-entry index memory off `Stats`, against the vendor-reported nutsdb figure |
+| `write_amp.go` | write-amplification summary across an explicit merge, accounting declared |
+| `recovery/` | the kill -9 recovery rig: child writer, timed reopen, data-size tiers |
 | `cmd/bench` | the CLI: one engine, one micro workload, printed numbers |
 | `cmd/matrix` | the CLI: the YCSB comparison matrix, one command, any subset |
+| `cmd/recovery` | the rig's CLI: tier runs with a stability verdict |
 
 ## Measurement path
 
@@ -151,6 +158,51 @@ fields are the single-run raw document's — one phase shape across
 every raw file this module emits. The declarations (workload
 semantics, elena mapping, per-engine durability standings) are part of
 both documents, ahead of and beside the numbers.
+
+## Recovery rig
+
+`bench/recovery` is the recovery-time instrument behind the
+"recovery time has numbers" claim: a child process appends a declared
+dataset through the public library API and acknowledges every event on
+stdout; the parent observes the acknowledgments, sends SIGKILL —
+after the whole schedule for timed runs, after any chosen
+acknowledgment for mid-run kills — and then times the reopen from a
+fresh process, in three declared segments:
+
+- kill → Open returning: SIGKILL delivery through the killed child's
+  teardown and reap, recovery begins when the fault lands;
+- Open returning → first read: the first acknowledged event read back
+  byte-exact through the public API;
+- their sum: kill → first readable.
+
+The rig adds no timing API to the engine or the library — it watches
+the public surface from outside the process under fault, which is the
+point of the instrument. Every run also proves the kill -9
+correctness bar before its numbers count: each acknowledged event must
+survive the reopen with its exact payload, and the recovered store
+must accept a fresh durable append. A run that loses anything is an
+error, not a datapoint.
+
+Data-size tiers give the report its scale axis: `micro` (64 KiB, the
+CI smoke shape, seconds-scale under the write-synchronized regime),
+then `256mb`, `1gb`, and `4gb` at 4 KiB values — manual runs on the
+declared environment, where the append schedule itself dominates the
+wall time. Repeat runs of one tier must agree within one order of
+magnitude: the CLI prints every run plus the stability verdict and
+fails a tier that spreads wider.
+
+```
+cd bench
+go run ./cmd/recovery --tier micro --runs 2 --dir <fresh-root>
+go run ./cmd/recovery --tier 256mb,1gb,4gb --runs 2 --dir <fresh-root>
+```
+
+The writer child is a reexec of the calling binary, the same contract
+the engine and semantic kill -9 harnesses run under, so the child
+drives the exact same compiled library — race instrumentation
+included — through its public API alone. The shared
+`ELENA_TEST_SKIP_KILL9` marker disables the rig's kill -9 scenarios
+in environments that cannot run child processes.
 
 ## Usage
 
