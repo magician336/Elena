@@ -11,7 +11,9 @@ import (
 )
 
 // Store is a trajectory store rooted at one directory. All methods are
-// safe for use from multiple goroutines.
+// safe for use from multiple goroutines. Unless disabled at Open, a
+// background sweep reclaims the bytes of elapsed sessions once per
+// DefaultSweepPeriod; see Open and the sweep options.
 type Store struct {
 	store *semantic.Store
 }
@@ -47,8 +49,11 @@ func Open(dir string, opts ...OpenOption) (*Store, error) {
 }
 
 // Close closes the store and releases its directory lock. Events
-// acknowledged before Close returns are durable. It is safe to call
-// Close more than once; repeated calls are no-ops.
+// acknowledged before Close returns are durable. The background sweep,
+// if running, is joined first: its goroutine exits before Close
+// returns, and the first sweep failure it hit, if any, is reported
+// here. It is safe to call Close more than once; repeated calls are
+// no-ops.
 func (s *Store) Close() error {
 	return s.store.Close()
 }
