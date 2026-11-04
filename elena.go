@@ -148,7 +148,8 @@ type Event struct {
 }
 
 // Events returns every event of the trajectory in sequence order. The
-// read is a snapshot: events appended after it starts are not included.
+// read observes one instant: events appended after it starts are not
+// included.
 func (sess *Session) Events() ([]Event, error) {
 	inner, err := sess.session.Events()
 	if err != nil {
@@ -161,10 +162,10 @@ func (sess *Session) Events() ([]Event, error) {
 // the trajectory whose sequence number is at most seq, in sequence
 // order, with the endpoint event itself included. A seq below the
 // trajectory's first sequence number — zero — reads empty; a seq beyond
-// the stored tail reads the whole trajectory. The read is a snapshot
-// like the full one: it returns the events visible when it starts, so
-// appends that race with it are not included even when their sequence
-// numbers fall under seq. A session whose TTL has elapsed reads as if
+// the stored tail reads the whole trajectory. The read observes one
+// instant like the full one: it returns the events visible when it
+// starts, so appends that race with it are not included even when
+// their sequence numbers fall under seq. A session whose TTL has elapsed reads as if
 // never written, so its point-in-time read is empty too.
 func (sess *Session) EventsUpTo(seq uint64) ([]Event, error) {
 	inner, err := sess.session.EventsUpTo(seq)

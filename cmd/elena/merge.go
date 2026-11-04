@@ -32,7 +32,7 @@ func runMerge(args []string, stdout io.Writer) error {
 	})
 }
 
-// statsLine renders one Stats snapshot for the merge comparison: the
+// statsLine renders one Stats view for the merge comparison: the
 // byte pair that bounds reclamation, the dead ratio, the write
 // amplification, and the file count.
 func statsLine(stats elena.Stats) string {

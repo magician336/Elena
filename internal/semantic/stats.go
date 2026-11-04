@@ -6,7 +6,7 @@ import "elena/internal/engine"
 // sees it: the engine's per-file observables, forwarded as-is.
 type FileStats = engine.FileStats
 
-// Stats is a point-in-time snapshot of the store's disk observables —
+// Stats is a point-in-time view of the store's disk observables —
 // the engine's existing observables, forwarded unchanged: the semantic
 // layer defines no metrics of its own. The dead-data view is
 // byte-based, matching what a merge can actually reclaim; the two byte
@@ -68,7 +68,7 @@ type Stats struct {
 	Files []FileStats
 }
 
-// Stats returns a point-in-time snapshot of the store's observables.
+// Stats returns a point-in-time view of the store's observables.
 // The figures are the storage engine's own, forwarded one-to-one —
 // reading Stats observes the store, it never changes it.
 func (s *Store) Stats() Stats {
