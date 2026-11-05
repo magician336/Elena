@@ -1,0 +1,36 @@
+{
+  "scenario": "merge-curve",
+  "result": {
+    "merge_elapsed_ns": 194833367,
+    "window_ns": 500000000,
+    "points": [
+      {
+        "offset_ns": -1000000000,
+        "appends": 110,
+        "reads": 110,
+        "append_p50_ns": 4100000,
+        "append_p99_ns": 5000000,
+        "read_p50_ns": 18000,
+        "read_p99_ns": 51000
+      },
+      {
+        "offset_ns": 0,
+        "appends": 110,
+        "reads": 110,
+        "append_p50_ns": 4300000,
+        "append_p99_ns": 5200000,
+        "read_p50_ns": 17000,
+        "read_p99_ns": 52000
+      },
+      {
+        "offset_ns": 1000000000,
+        "appends": 110,
+        "reads": 109,
+        "append_p50_ns": 4600000,
+        "append_p99_ns": 5300000,
+        "read_p50_ns": 16000,
+        "read_p99_ns": 53000
+      }
+    ]
+  }
+}

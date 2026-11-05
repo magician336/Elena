@@ -1,0 +1,247 @@
+/* Elena demo page — one static stylesheet, no framework, no web fonts
+   (the page must render identically offline, straight from the
+   filesystem). */
+
+:root {
+  --ink: #1c2733;
+  --ink-soft: #52606d;
+  --paper: #fbfaf7;
+  --card: #ffffff;
+  --line: #e3e0d8;
+  --accent: #0f6e5d;
+  --accent-soft: #e3f2ee;
+  --warn: #8a5a00;
+  --warn-soft: #f6ecd9;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0 auto;
+  max-width: 60rem;
+  padding: 2.5rem 1.5rem 4rem;
+  color: var(--ink);
+  background: var(--paper);
+  font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+code { font-family: var(--mono); font-size: 0.9em; background: var(--accent-soft); padding: 0 0.3em; border-radius: 3px; }
+
+a { color: var(--accent); }
+
+/* ---------- masthead ---------- */
+
+.masthead h1 {
+  margin: 0;
+  font-size: 2.6rem;
+  letter-spacing: -0.02em;
+}
+
+.tagline {
+  font-size: 1.15rem;
+  max-width: 46rem;
+  margin: 0.6rem 0 1rem;
+}
+
+.how { color: var(--ink-soft); max-width: 46rem; }
+
+/* ---------- acts ---------- */
+
+.act { margin-top: 3.5rem; }
+
+.act h2 {
+  font-size: 1.5rem;
+  border-bottom: 2px solid var(--line);
+  padding-bottom: 0.4rem;
+}
+
+.act-no {
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  color: var(--accent);
+  display: block;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.act-lead { max-width: 46rem; color: var(--ink-soft); }
+
+.scene {
+  border-left: 3px solid var(--accent);
+  padding: 0.2rem 0 0.2rem 0.9rem;
+  color: var(--ink-soft);
+  font-style: italic;
+  max-width: 44rem;
+}
+
+/* ---------- act 1: timeline ---------- */
+
+.timeline { list-style: none; margin: 1.2rem 0; padding: 0; }
+
+.timeline .ev {
+  display: grid;
+  grid-template-columns: 5.5rem 1fr 10.5rem;
+  gap: 0.8rem;
+  padding: 0.45rem 0.6rem;
+  border-left: 3px solid var(--accent);
+  margin-bottom: 0.35rem;
+  background: var(--card);
+  border-radius: 0 4px 4px 0;
+}
+
+.timeline .ev .seq { font-family: var(--mono); font-weight: 600; color: var(--accent); }
+.timeline .ev .at { font-family: var(--mono); font-size: 0.85rem; color: var(--ink-soft); text-align: right; }
+
+.timeline .ev.beyond { border-left-color: var(--line); opacity: 0.75; }
+.timeline .ev .ev-note { display: block; grid-column: 2; font-size: 0.8rem; color: var(--ink-soft); }
+
+.timeline .bound {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.8rem;
+  align-items: baseline;
+  margin: 0.5rem 0;
+  padding: 0.5rem 0.7rem;
+  border: 1px dashed var(--accent);
+  border-radius: 4px;
+  background: var(--accent-soft);
+  font-size: 0.9rem;
+}
+
+.bound-tag {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* ---------- act 2: steps ---------- */
+
+.steps { list-style: none; margin: 1.2rem 0; padding: 0; counter-reset: stepno; }
+
+.step {
+  position: relative;
+  padding: 0.55rem 0.7rem 0.55rem 3rem;
+  margin-bottom: 0.4rem;
+  background: var(--card);
+  border-radius: 4px;
+  border-left: 3px solid var(--line);
+  counter-increment: stepno;
+}
+
+.step::before {
+  content: counter(stepno);
+  position: absolute;
+  left: 0.8rem;
+  top: 0.6rem;
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+}
+
+.step-title { display: block; font-weight: 600; }
+
+.step-detail { display: block; color: var(--ink-soft); font-size: 0.92rem; }
+
+.step.commit { border-left-color: var(--accent); background: var(--accent-soft); }
+.step.fault { border-left-color: var(--warn); background: var(--warn-soft); }
+.step.restore, .step.reopen { border-left-color: var(--accent); }
+
+.contrast {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.8rem;
+  margin: 1.4rem 0;
+}
+
+.contrast-side {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.7rem 0.9rem;
+}
+
+.contrast-side h3 { margin: 0 0 0.3rem; font-size: 1rem; }
+.contrast-side p { margin: 0; color: var(--ink-soft); font-size: 0.92rem; }
+
+.final-strip { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+
+.final-ev {
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  padding: 0.15rem 0.45rem;
+  border-radius: 3px;
+  background: var(--accent-soft);
+  border: 1px solid var(--line);
+}
+
+.final-ev em { font-style: normal; color: var(--ink-soft); margin-left: 0.35rem; }
+.final-ev.rewritten { background: var(--warn-soft); }
+.final-ev.residue { background: var(--paper); }
+
+/* ---------- act 3: cards ---------- */
+
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); gap: 0.9rem; }
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.9rem 1rem 0.7rem;
+  display: flex;
+  flex-direction: column;
+}
+
+.card h3 { margin: 0 0 0.15rem; font-size: 1.02rem; }
+
+.scope { margin: 0 0 0.6rem; font-size: 0.82rem; color: var(--ink-soft); }
+
+.figure { flex: 1; }
+
+.source {
+  margin: 0.7rem 0 0;
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+  border-top: 1px solid var(--line);
+  padding-top: 0.5rem;
+}
+
+.big { display: flex; align-items: baseline; gap: 0.5rem; margin: 0.2rem 0; font-family: var(--mono); }
+.big span { font-size: 1.45rem; font-weight: 600; }
+.big .arrow { color: var(--accent); font-size: 1.1rem; }
+
+.sub-figure { margin: 0.15rem 0 0.3rem; font-size: 0.88rem; color: var(--ink-soft); }
+
+.bar-row { display: grid; grid-template-columns: 5rem 1fr auto; gap: 0.5rem; align-items: center; margin: 0.3rem 0; }
+.bar-row .bar-name { font-family: var(--mono); font-size: 0.88rem; }
+.bar-row .bar-val { font-family: var(--mono); font-size: 0.88rem; font-weight: 600; }
+.bar-row .bar-p99 { grid-column: 3; font-family: var(--mono); font-size: 0.78rem; color: var(--ink-soft); }
+.bar-row.self .bar-name { color: var(--accent); font-weight: 600; }
+
+.bar-track { background: var(--paper); border-radius: 3px; overflow: hidden; height: 0.7rem; }
+.bar-fill { display: block; height: 100%; background: var(--line); }
+.bar-row.self .bar-fill { background: var(--accent); }
+
+/* Where-elena-loses card reuses bar-row with value-only rows. */
+.card .bar-row { grid-template-columns: 5rem 1fr auto; }
+
+/* ---------- colophon ---------- */
+
+.colophon {
+  margin-top: 3.5rem;
+  border-top: 2px solid var(--line);
+  padding-top: 1rem;
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+}
+
+.colophon .links { display: flex; flex-wrap: wrap; gap: 1.2rem; }
+
+@media (max-width: 40rem) {
+  .contrast { grid-template-columns: 1fr; }
+  .timeline .ev { grid-template-columns: 4.5rem 1fr; }
+  .timeline .ev .at { grid-column: 2; text-align: left; }
+}
