@@ -138,7 +138,11 @@ func TestVerifyAckedSurviveRejectsLoss(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open %s: %v", otherDir, err)
 	}
-	defer stOther.Close()
+	defer func() {
+		if err := stOther.Close(); err != nil {
+			t.Fatalf("Close of the other-seed store failed: %v", err)
+		}
+	}()
 	if err := appendSchedule(stOther, other, func(Ack) error { return nil }); err != nil {
 		t.Fatalf("appendSchedule: %v", err)
 	}
@@ -156,7 +160,11 @@ func TestVerifyAckedSurviveRejectsLoss(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open %s: %v", dir, err)
 	}
-	defer st.Close()
+	defer func() {
+		if err := st.Close(); err != nil {
+			t.Fatalf("Close of the honest store failed: %v", err)
+		}
+	}()
 	if err := appendSchedule(st, spec, func(Ack) error { return nil }); err != nil {
 		t.Fatalf("appendSchedule: %v", err)
 	}

@@ -24,8 +24,8 @@ import (
 // than by a time period, which is not the harness's group-commit tier,
 // so that tier produces no rosedb numbers.
 type rosedbDriver struct {
-	db        *rosedb.DB
-	latestLen map[uint64]int // key → payload length of its latest acknowledged put
+	db    *rosedb.DB
+	reads readLedger[int] // key → payload length of its latest acknowledged put
 }
 
 // Name identifies the driver in reports.
@@ -45,7 +45,7 @@ func (d *rosedbDriver) Open(dir string) error {
 		return err
 	}
 	d.db = db
-	d.latestLen = map[uint64]int{}
+	d.reads = newReadLedger[int]()
 	return nil
 }
 
@@ -67,21 +67,18 @@ func (d *rosedbDriver) Do(op Op) error {
 		if err := batch.Commit(); err != nil {
 			return err
 		}
-		d.latestLen[op.Key] = len(op.Value)
+		d.reads.record(op.Key, len(op.Value))
 		return nil
 	case OpRead:
-		wantLen, ok := d.latestLen[op.Key]
-		if !ok {
-			return fmt.Errorf("read of key %d with no acknowledged append", op.Key)
+		wantLen, err := d.reads.expect(op.Key)
+		if err != nil {
+			return err
 		}
 		value, err := d.db.Get(kvKey(op.Key))
 		if err != nil {
 			return fmt.Errorf("get key %d: %w", op.Key, err)
 		}
-		if len(value) != wantLen {
-			return fmt.Errorf("read of key %d returned %d bytes, want %d", op.Key, len(value), wantLen)
-		}
-		return nil
+		return verifyReadLen(op.Key, value, wantLen)
 	default:
 		return fmt.Errorf("unknown op kind %v", op.Kind)
 	}

@@ -562,7 +562,7 @@ func verifyElapsed(store *elena.Store, sessions []*elena.Session, g int) error {
 	for s, sess := range sessions {
 		events, err := sess.Events()
 		if err != nil {
-			return fmt.Errorf("Events of elapsed g%d s%d: %w", g, s, err)
+			return fmt.Errorf("events of elapsed g%d s%d: %w", g, s, err)
 		}
 		if len(events) != 0 {
 			return fmt.Errorf("elapsed g%d s%d reads %d events, want 0", g, s, len(events))

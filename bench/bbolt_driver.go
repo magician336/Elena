@@ -30,8 +30,8 @@ const bboltLockTimeout = 5 * time.Second
 // transactions, which never sync.
 type bboltDriver struct {
 	db          *bolt.DB
-	latestLen   map[uint64]int // key → payload length of its latest put
-	lockTimeout time.Duration  // zero means the bbolt default (wait forever)
+	reads       readLedger[int] // key → payload length of its latest put
+	lockTimeout time.Duration   // zero means the bbolt default (wait forever)
 }
 
 // Name identifies the driver in reports.
@@ -55,7 +55,7 @@ func (d *bboltDriver) Open(dir string) error {
 		return err
 	}
 	d.db = db
-	d.latestLen = map[uint64]int{}
+	d.reads = newReadLedger[int]()
 	return nil
 }
 
@@ -73,22 +73,19 @@ func (d *bboltDriver) Do(op Op) error {
 		if err != nil {
 			return err
 		}
-		d.latestLen[op.Key] = len(op.Value)
+		d.reads.record(op.Key, len(op.Value))
 		return nil
 	case OpRead:
-		wantLen, ok := d.latestLen[op.Key]
-		if !ok {
-			return fmt.Errorf("read of key %d with no acknowledged append", op.Key)
+		wantLen, err := d.reads.expect(op.Key)
+		if err != nil {
+			return err
 		}
 		return d.db.View(func(tx *bolt.Tx) error {
 			value := tx.Bucket(bboltBucket).Get(kvKey(op.Key))
 			if value == nil {
 				return fmt.Errorf("read of key %d returned nothing", op.Key)
 			}
-			if len(value) != wantLen {
-				return fmt.Errorf("read of key %d returned %d bytes, want %d", op.Key, len(value), wantLen)
-			}
-			return nil
+			return verifyReadLen(op.Key, value, wantLen)
 		})
 	default:
 		return fmt.Errorf("unknown op kind %v", op.Kind)

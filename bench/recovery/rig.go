@@ -137,16 +137,20 @@ func runWriterUntilKill(spec Spec) ([]Ack, time.Time, error) {
 	if err != nil {
 		return nil, time.Time{}, fmt.Errorf("pipe writer child stdin: %w", err)
 	}
-	defer stdin.Close() // no-op once the child is dead and drained
 	stderr := new(bytes.Buffer)
 	cmd.Stderr = stderr
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
+		_ = stdin.Close() // the child never started; release the write end
 		return nil, time.Time{}, fmt.Errorf("pipe writer child stdout: %w", err)
 	}
 	if err := cmd.Start(); err != nil {
+		_ = stdin.Close() // the child never started; release the write end
 		return nil, time.Time{}, fmt.Errorf("start writer child: %w", err)
 	}
+	// No Close of stdin beyond the two paths above: every path past a
+	// successful Start reaps the child through cmd.Wait, and Wait closes
+	// the pipe's write end itself.
 
 	var killed time.Time
 	var killErr error
@@ -311,14 +315,18 @@ func verifyPostKillWrite(st *elena.Store, dir string, ackedMax []uint64) error {
 	if err != nil {
 		return fmt.Errorf("reopen after the post-kill append: %w", err)
 	}
-	defer reopened.Close()
 	s0, err := reopened.CreateSession(writerNamespace, writerSessionName(0))
 	if err != nil {
+		closeMeasured(reopened)
 		return fmt.Errorf("attach s0 after the second reopen: %w", err)
 	}
 	ev, err := s0.Event(seq)
 	if err != nil || string(ev.Payload) != "post-kill" {
+		closeMeasured(reopened)
 		return fmt.Errorf("post-kill append s0#%d after reopen = %q, %v; want \"post-kill\", nil", seq, ev.Payload, err)
+	}
+	if err := reopened.Close(); err != nil {
+		return fmt.Errorf("close after the second reopen: %w", err)
 	}
 	return nil
 }
