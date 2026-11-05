@@ -346,6 +346,7 @@ func RunTTLMix(dir string, spec TTLMixSpec) (Result, error) {
 	res := Result{Driver: "elena", Workload: "elena-ttl-mix"}
 	protectedOrdinal := 0
 	for g := 0; g < spec.Generations; g++ {
+		mergesAtGenStart := store.Stats().OpsMerge
 		appendPhase := newTimedPhase(fmt.Sprintf("ttl-append-g%d", g))
 		sessions := make([]*elena.Session, spec.SessionsPerGen)
 		for s := range sessions {
@@ -377,7 +378,9 @@ func RunTTLMix(dir string, spec TTLMixSpec) (Result, error) {
 		res.Phases = append(res.Phases, appendPhase.result())
 		protectedOrdinal += spec.EventsPerSession
 
-		if err := awaitReclaimed(store, uint64(g)+1); err != nil {
+		if err := awaitGenerationReclaimed(store,
+			ttlLiveEntriesAfterGeneration(spec, g), mergesAtGenStart,
+			spec.TTL+ttlReclaimSlack); err != nil {
 			return fail(fmt.Errorf("ttl-mix scenario: generation %d: %w", g, err))
 		}
 		if err := verifyElapsed(store, sessions, g); err != nil {
@@ -499,21 +502,53 @@ func (p *timedPhase) result() PhaseResult {
 	}
 }
 
-// awaitReclaimed blocks until the background sweep has run merge
-// number merges — deadline elapsed, sweep check, merge executed — or
-// fails after a generous timeout. The live-entry fall that comes with
-// the merge is asserted alongside: a merge count without reclaimed
-// entries is not reclamation.
-func awaitReclaimed(store *elena.Store, merges uint64) error {
-	before := store.Stats()
-	deadline := time.Now().Add(5 * time.Second)
+// ttlReclaimSlack is the grace the reclamation wait grants beyond the
+// TTL itself: the wait begins after the append phase, so the deadline
+// sits at most one TTL away and the sweep adds at most one period plus
+// the merge's own duration. Five seconds absorbs all three on any
+// disk the scenario runs on.
+const ttlReclaimSlack = 5 * time.Second
+
+// ttlLiveEntriesAfterGeneration returns the store's exact live-entry
+// count once generation g's timed population is reclaimed: the
+// protected trajectory's metadata entry plus its events through
+// generation g. Every other entry the scenario wrote by then carries a
+// deadline that has already elapsed — the previous generations'
+// recreated sessions expire before the current generation's timed
+// sessions — and one merge drops every expired entry on disk, whichever
+// population triggered it. The count is therefore an identity, not an
+// estimate: while generation g's sessions hold unreclaimed bytes the
+// count sits SessionsPerGen*(EventsPerSession+1) entries above it, and
+// no other population's merge can close that gap.
+func ttlLiveEntriesAfterGeneration(spec TTLMixSpec, g int) uint64 {
+	return uint64(1 + (g+1)*spec.EventsPerSession)
+}
+
+// awaitGenerationReclaimed blocks until the current generation's timed
+// sessions are physically reclaimed — the live-entry count has fallen
+// to the generation's known identity want and at least one merge has
+// run since the generation began (mergesBefore) — or fails after
+// timeout. The condition is generation-bound where the merge count it
+// replaced was global: consecutive generations hold deadline
+// populations whose deadlines sit sub-second apart, and the merge that
+// reclaims the previous generation's recreated sessions raises the
+// global merge count and lowers the live-entry total without
+// touching the current generation's bytes — under the count-based wait
+// that premature satisfaction let the elapsed checks run against
+// sessions that had not expired yet. The identity check cannot be
+// satisfied early: expired-but-unmerged entries still count as live,
+// so the count reaches want only when a merge has dropped every timed
+// entry up to and including generation g's.
+func awaitGenerationReclaimed(store *elena.Store, want, mergesBefore uint64, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
 	for {
 		stats := store.Stats()
-		if stats.OpsMerge >= merges && stats.LiveEntries < before.LiveEntries {
+		if stats.LiveEntries == want && stats.OpsMerge > mergesBefore {
 			return nil
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("timed out waiting for sweep merge %d; Stats before %+v after %+v", merges, before, stats)
+			return fmt.Errorf("timed out waiting for generation reclamation: live entries %d want %d, merges %d started at %d; Stats %+v",
+				stats.LiveEntries, want, stats.OpsMerge, mergesBefore, stats)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}

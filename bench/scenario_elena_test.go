@@ -243,15 +243,22 @@ func TestRunPointInTimeRejectsInvalidSpec(t *testing.T) {
 }
 
 // TestRunTTLMix drives the append + TTL-expiry scenario load at smoke
-// size and pins the phase shape: per generation one append phase and
-// one recreate phase, then one final protected-read phase. The expiry,
-// sweep, and merge chain is verified inside the run — a completed run
-// is the evidence it happened.
+// size across four generations — three generation transitions, each a
+// spot where the previous generation's recreated sessions expire
+// shortly before the current generation's timed sessions — and pins
+// the phase shape: per generation one append phase and one recreate
+// phase, then one final protected-read phase. The expiry, sweep, and
+// merge chain is verified inside the run against the generation's own
+// sessions, so a completed run is the evidence it happened on every
+// generation, on any disk timing: the reclamation wait is bound to the
+// generation's known byte identity, not to a merge count another
+// population could satisfy. The TTL carries enough margin over the
+// append phase for disks far slower than the development machine's.
 func TestRunTTLMix(t *testing.T) {
 	dir := t.TempDir()
 	res, err := RunTTLMix(dir, TTLMixSpec{
-		Generations: 2, SessionsPerGen: 2, EventsPerSession: 2,
-		ValueSize: 32, TTL: 60 * time.Millisecond, SweepPeriod: 15 * time.Millisecond,
+		Generations: 4, SessionsPerGen: 2, EventsPerSession: 2,
+		ValueSize: 32, TTL: 250 * time.Millisecond, SweepPeriod: 25 * time.Millisecond,
 	})
 	if err != nil {
 		t.Fatalf("RunTTLMix: %v", err)
@@ -259,10 +266,16 @@ func TestRunTTLMix(t *testing.T) {
 	if res.Driver != "elena" || res.Workload != "elena-ttl-mix" {
 		t.Fatalf("driver/workload = %q/%q, want elena/elena-ttl-mix", res.Driver, res.Workload)
 	}
-	if len(res.Phases) != 5 {
-		t.Fatalf("phases = %d, want 5 (append+recreate per generation, plus protected read)", len(res.Phases))
+	if len(res.Phases) != 9 {
+		t.Fatalf("phases = %d, want 9 (append+recreate per generation, plus protected read)", len(res.Phases))
 	}
-	wantNames := []string{"ttl-append-g0", "ttl-recreate-g0", "ttl-append-g1", "ttl-recreate-g1", "ttl-protected-read"}
+	wantNames := []string{
+		"ttl-append-g0", "ttl-recreate-g0",
+		"ttl-append-g1", "ttl-recreate-g1",
+		"ttl-append-g2", "ttl-recreate-g2",
+		"ttl-append-g3", "ttl-recreate-g3",
+		"ttl-protected-read",
+	}
 	for i, want := range wantNames {
 		if res.Phases[i].Phase != want {
 			t.Errorf("phase %d = %q, want %q", i, res.Phases[i].Phase, want)
@@ -280,8 +293,8 @@ func TestRunTTLMix(t *testing.T) {
 		t.Errorf("ttl-recreate-g0 ops = %d, want 4", res.Phases[1].Ops)
 	}
 	// Protected read: every event of the surviving trajectory.
-	if res.Phases[4].Ops != 4 {
-		t.Errorf("ttl-protected-read ops = %d, want 4", res.Phases[4].Ops)
+	if res.Phases[8].Ops != 8 {
+		t.Errorf("ttl-protected-read ops = %d, want 8", res.Phases[8].Ops)
 	}
 
 	// The protected trajectory survived every merge: reopen shows all
@@ -299,8 +312,171 @@ func TestRunTTLMix(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Events protected: %v", err)
 	}
-	if len(events) != 4 {
-		t.Fatalf("protected trajectory holds %d events after reopen, want 4", len(events))
+	if len(events) != 8 {
+		t.Fatalf("protected trajectory holds %d events after reopen, want 8", len(events))
+	}
+}
+
+// TestTTLLiveEntriesAfterGeneration pins the reclamation identity with
+// worked examples: one metadata entry plus one event per generation,
+// independent of how many timed sessions each generation held.
+func TestTTLLiveEntriesAfterGeneration(t *testing.T) {
+	spec := TTLMixSpec{Generations: 4, SessionsPerGen: 32, EventsPerSession: 5, ValueSize: 16,
+		TTL: time.Second, SweepPeriod: 50 * time.Millisecond}
+	cases := []struct {
+		g    int
+		want uint64
+	}{
+		{0, 6},
+		{1, 11},
+		{3, 21},
+	}
+	for _, tc := range cases {
+		if got := ttlLiveEntriesAfterGeneration(spec, tc.g); got != tc.want {
+			t.Errorf("generation %d identity = %d, want %d", tc.g, got, tc.want)
+		}
+	}
+}
+
+// TestAwaitGenerationReclaimedBindsToGeneration pins the generation
+// binding of the TTL scenario's reclamation wait. Consecutive
+// generations hold two deadline populations whose deadlines sit close:
+// the previous generation's recreated sessions expire shortly before
+// the current generation's timed sessions, so a sweep tick between the
+// two deadlines merges the earlier population. That merge must not
+// satisfy the current generation's wait — the exact orchestration race
+// the formal run of ticket 09 observed. The interleaving is built by
+// hand against a real store, sweep off, with the test itself playing
+// the sweep's merge ticks, so the racing window is constructed from
+// the two TTLs instead of sub-second write latencies and the race
+// reproduces deterministically on any disk.
+func TestAwaitGenerationReclaimedBindsToGeneration(t *testing.T) {
+	const (
+		sessions   = 3
+		events     = 2
+		ttlPrior   = 300 * time.Millisecond
+		ttlCurrent = 900 * time.Millisecond
+	)
+	store, err := elena.Open(t.TempDir(), elena.WithSweepDisabled())
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	// The perpetual protected trajectory: one metadata entry plus four
+	// events, the live-entry floor once every timed population is gone.
+	protected, err := store.CreateSession(elenaNamespace, ttlProtectedName)
+	if err != nil {
+		t.Fatalf("create protected: %v", err)
+	}
+	for i := 0; i < sessions+1; i++ {
+		if _, err := protected.Append([]byte("protected")); err != nil {
+			t.Fatalf("append protected %d: %v", i, err)
+		}
+	}
+	if got := store.Stats().LiveEntries; got != 5 {
+		t.Fatalf("live entries after protected = %d, want 5 (metadata plus 4 events)", got)
+	}
+
+	// Generation 0's timed population: sessions × (metadata + events)
+	// entries, all carrying the earlier deadline.
+	prior := make([]*elena.Session, sessions)
+	for s := range prior {
+		prior[s], err = store.CreateSessionWithTTL(elenaNamespace, ttlTimedName(0, s), ttlPrior)
+		if err != nil {
+			t.Fatalf("create prior %d: %v", s, err)
+		}
+		for e := 0; e < events; e++ {
+			if _, err := prior[s].Append([]byte("prior")); err != nil {
+				t.Fatalf("append prior %d: %v", s, err)
+			}
+		}
+	}
+	if got := store.Stats().LiveEntries; got != 5+sessions*(events+1) {
+		t.Fatalf("live entries after prior generation = %d, want %d", got, 5+sessions*(events+1))
+	}
+
+	// Generation 0's reclamation: the deadline elapses, one merge
+	// reclaims its bytes, and the wait for merge 1 returns — the
+	// single-generation chain, still correct.
+	time.Sleep(ttlPrior + 100*time.Millisecond)
+	if err := store.Merge(); err != nil {
+		t.Fatalf("merge prior generation: %v", err)
+	}
+	if got := store.Stats().LiveEntries; got != 5 {
+		t.Fatalf("live entries after prior merge = %d, want 5", got)
+	}
+
+	// The previous generation's recreate population (one metadata and
+	// one event per session, ttlPrior again) and the current
+	// generation's timed population (ttlCurrent, created right after):
+	// their deadlines differ by the TTL gap — around 600ms regardless
+	// of disk speed — with the recreate deadline first, exactly the
+	// formal run's ordering.
+	for s := range prior {
+		sess, err := store.CreateSessionWithTTL(elenaNamespace, ttlTimedName(0, s), ttlPrior)
+		if err != nil {
+			t.Fatalf("recreate prior %d: %v", s, err)
+		}
+		if _, err := sess.Append([]byte("recreated")); err != nil {
+			t.Fatalf("append recreated %d: %v", s, err)
+		}
+	}
+	current := make([]*elena.Session, sessions)
+	for s := range current {
+		current[s], err = store.CreateSessionWithTTL(elenaNamespace, ttlTimedName(1, s), ttlCurrent)
+		if err != nil {
+			t.Fatalf("create current %d: %v", s, err)
+		}
+		for e := 0; e < events; e++ {
+			if _, err := current[s].Append([]byte("current")); err != nil {
+				t.Fatalf("append current %d: %v", s, err)
+			}
+		}
+	}
+	mergesBefore := store.Stats().OpsMerge
+	if got := store.Stats().LiveEntries; got != 5+2*sessions+sessions*(events+1) {
+		t.Fatalf("live entries with both populations = %d, want %d", got, 5+2*sessions+sessions*(events+1))
+	}
+
+	// The wait for generation 1 starts, then the racing merge lands:
+	// the recreate population's deadline has elapsed, the current
+	// generation's has not, and the sweep's merge reclaims the earlier
+	// bytes. The wait must keep waiting — nothing may report
+	// generation 1 reclaimed while its sessions still hold events.
+	awaited := make(chan error, 1)
+	want := uint64(1 + 2*events) // protected metadata plus its events
+	go func() {
+		awaited <- awaitGenerationReclaimed(store, want, mergesBefore, 2*time.Second)
+	}()
+	time.Sleep(60 * time.Millisecond)
+	time.Sleep(ttlPrior) // the recreate deadline elapses; the current one is still ~600ms away
+	if err := store.Merge(); err != nil {
+		t.Fatalf("racing merge: %v", err)
+	}
+	select {
+	case err := <-awaited:
+		t.Fatalf("reclamation wait returned %v while the current generation still holds events — generation binding broken", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	// The current generation's own deadline elapses and its merge
+	// runs: the wait returns, and the live-entry count has fallen to
+	// the protected floor.
+	time.Sleep(ttlCurrent)
+	if err := store.Merge(); err != nil {
+		t.Fatalf("current merge: %v", err)
+	}
+	select {
+	case err := <-awaited:
+		if err != nil {
+			t.Fatalf("reclamation wait after current merge: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("reclamation wait did not return after the current generation's merge")
+	}
+	if got := store.Stats().LiveEntries; got != 5 {
+		t.Fatalf("live entries after current merge = %d, want 5", got)
 	}
 }
 
