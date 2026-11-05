@@ -4,7 +4,7 @@ import (
 	"io"
 	"time"
 
-	"elena"
+	"github.com/magician336/elena"
 )
 
 // runStatus prints the store overview: every namespace with its live

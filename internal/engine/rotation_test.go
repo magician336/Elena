@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"elena/internal/engine"
+	"github.com/magician336/elena/internal/engine"
 )
 
 // openEngineWithOptions opens dir with explicit Options.

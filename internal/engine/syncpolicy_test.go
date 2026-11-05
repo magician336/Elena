@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"elena/internal/engine"
+	"github.com/magician336/elena/internal/engine"
 )
 
 // Sync tests share one fixture shape: a handful of puts, an overwrite,

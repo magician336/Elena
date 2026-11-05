@@ -18,7 +18,7 @@ import (
 	"strings"
 	"time"
 
-	"elena/bench/recovery"
+	"github.com/magician336/elena/bench/recovery"
 )
 
 // usageText is the public help surface. Every line leads with a system

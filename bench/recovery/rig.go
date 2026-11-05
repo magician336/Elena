@@ -13,7 +13,7 @@ import (
 	"syscall"
 	"time"
 
-	"elena"
+	"github.com/magician336/elena"
 )
 
 // Result carries one rig run's outcome: the dataset shape for the

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"elena"
+	"github.com/magician336/elena"
 )
 
 // CreateCheckpoint must hand out IDs that increase with creation order,

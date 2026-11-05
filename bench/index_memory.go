@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"elena"
+	"github.com/magician336/elena"
 )
 
 // NutsDBIndexMemoryReference is the competitor figure the per-entry

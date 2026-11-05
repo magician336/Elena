@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"elena/internal/engine"
+	"github.com/magician336/elena/internal/engine"
 )
 
 // openEngine is a helper that opens dir and fails the test on error.

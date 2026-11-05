@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"elena"
+	"github.com/magician336/elena"
 )
 
 // TestWriteAmplificationReadingOfMapsStats pins the reading's basis:

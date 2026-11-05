@@ -1,6 +1,6 @@
 package semantic
 
-import "elena/internal/engine"
+import "github.com/magician336/elena/internal/engine"
 
 // FileStats describes one data file of the store directory as Stats
 // sees it: the engine's per-file observables, forwarded as-is.

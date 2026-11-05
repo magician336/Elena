@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"elena/bench/recovery"
+	"github.com/magician336/elena/bench/recovery"
 )
 
 // cliRoot returns a fresh root directory for one Run-level test: Run

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"elena/internal/engine"
+	"github.com/magician336/elena/internal/engine"
 )
 
 // ErrEventNotFound is returned by Event when the trajectory holds no

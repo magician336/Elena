@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"elena"
+	"github.com/magician336/elena"
 )
 
 // TestRunAppendCurve drives the concurrency curve at smoke size: three

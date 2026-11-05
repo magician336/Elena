@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"io"
 
-	"elena"
+	"github.com/magician336/elena"
 )
 
 // runMerge triggers one merge — the explicit reclamation entry — and

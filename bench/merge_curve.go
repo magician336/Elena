@@ -5,7 +5,7 @@ import (
 	"os"
 	"time"
 
-	"elena"
+	"github.com/magician336/elena"
 )
 
 // MergeCurveConfig declares the merge-curve scenario's shape. A mixed

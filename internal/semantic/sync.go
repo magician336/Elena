@@ -3,7 +3,7 @@ package semantic
 import (
 	"errors"
 
-	"elena/internal/engine"
+	"github.com/magician336/elena/internal/engine"
 )
 
 // SyncPolicy is the engine's durability tier, re-exported so the root

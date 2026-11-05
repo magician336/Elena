@@ -8,7 +8,7 @@ import (
 	"sort"
 	"time"
 
-	"elena/internal/engine"
+	"github.com/magician336/elena/internal/engine"
 )
 
 // The checkpoint manifest: the value bytes stored for one checkpoint.

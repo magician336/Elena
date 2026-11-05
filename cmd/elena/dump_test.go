@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"elena"
+	"github.com/magician336/elena"
 )
 
 func TestRunDumpWholeStore(t *testing.T) {

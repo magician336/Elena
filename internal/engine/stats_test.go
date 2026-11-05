@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"elena/internal/engine"
+	"github.com/magician336/elena/internal/engine"
 )
 
 // encodedEntrySize is the documented on-disk footprint of one entry:

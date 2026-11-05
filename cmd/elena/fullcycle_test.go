@@ -15,7 +15,7 @@ import (
 	"syscall"
 	"testing"
 
-	"elena"
+	"github.com/magician336/elena"
 )
 
 // The full-cycle harness: the W2 acceptance flow — write, checkpoint,

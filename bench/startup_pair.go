@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"elena"
+	"github.com/magician336/elena"
 )
 
 // The two open modes the startup scenario times. The engine writes one

@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"elena/internal/semantic"
+	"github.com/magician336/elena/internal/semantic"
 )
 
 // Store is a trajectory store rooted at one directory. All methods are

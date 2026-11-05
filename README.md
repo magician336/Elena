@@ -150,7 +150,7 @@ store, create a session, append (fragment; complete programs in
 [`examples/`](examples/)):
 
 ```go
-import "elena"
+import "github.com/magician336/elena"
 
 store, _ := elena.Open(dir)                     // one directory, created if absent; every append
                                                 // fdatasync'ed before it acknowledges (default tier)

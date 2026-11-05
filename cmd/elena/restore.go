@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"time"
 
-	"elena"
+	"github.com/magician336/elena"
 )
 
 // runRestore resets the store's runtime view to a checkpoint baseline —

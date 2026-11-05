@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"elena/internal/engine"
+	"github.com/magician336/elena/internal/engine"
 )
 
 // Merge must reclaim dead data while preserving every live entry: the

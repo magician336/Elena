@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"elena"
+	"github.com/magician336/elena"
 )
 
 // openStore opens a store in a fresh temporary directory and closes it

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"elena"
+	"github.com/magician336/elena"
 )
 
 // waitForStats polls Stats until cond passes, failing the test when the

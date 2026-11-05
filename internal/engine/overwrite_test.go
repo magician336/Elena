@@ -3,7 +3,7 @@ package engine_test
 import (
 	"testing"
 
-	"elena/internal/engine"
+	"github.com/magician336/elena/internal/engine"
 )
 
 // Overwriting a key must make the newest value win immediately: the

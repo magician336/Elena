@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"elena"
+	"github.com/magician336/elena"
 )
 
 // createTimedSession creates the session named by namespace and session

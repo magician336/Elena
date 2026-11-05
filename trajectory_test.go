@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"elena"
+	"github.com/magician336/elena"
 )
 
 // mustAppend appends payload and fails the test on error.

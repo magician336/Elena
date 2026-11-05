@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"elena"
+	"github.com/magician336/elena"
 )
 
 // microSpec is the CI-scale rig shape: a seconds-scale schedule under

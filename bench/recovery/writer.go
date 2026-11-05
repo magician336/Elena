@@ -6,7 +6,7 @@ import (
 	"os"
 	"strconv"
 
-	"elena"
+	"github.com/magician336/elena"
 )
 
 // Environment variables of the writer-child protocol. The mode

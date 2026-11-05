@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"elena/bench/recovery"
+	"github.com/magician336/elena/bench/recovery"
 )
 
 // main is wiring only, with one contract ahead of the wiring: Measure

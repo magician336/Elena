@@ -1,9 +1,9 @@
-module elena/bench
+module github.com/magician336/elena/bench
 
 go 1.27
 
 require (
-	elena v0.0.0
+	github.com/magician336/elena v0.0.0
 	github.com/dgraph-io/badger/v4 v4.9.6
 	github.com/rosedblabs/rosedb/v2 v2.4.0
 	go.etcd.io/bbolt v1.4.3
@@ -31,4 +31,4 @@ require (
 	google.golang.org/protobuf v1.36.7 // indirect
 )
 
-replace elena => ../
+replace github.com/magician336/elena => ../

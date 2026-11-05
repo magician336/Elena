@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"elena"
+	"github.com/magician336/elena"
 )
 
 // TestRunAppendOnly drives the pure-append scenario load at smoke size

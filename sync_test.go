@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"elena"
+	"github.com/magician336/elena"
 )
 
 // WithSyncInterval must reject periods that cannot define a flush

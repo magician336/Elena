@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"elena/internal/engine"
+	"github.com/magician336/elena/internal/engine"
 )
 
 // dataFilePath returns the path of the single data file in dir.

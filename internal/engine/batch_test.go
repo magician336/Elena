@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"elena/internal/engine"
+	"github.com/magician336/elena/internal/engine"
 )
 
 // Batches provide durable atomicity, not transactions: one Commit =

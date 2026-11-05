@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"elena"
+	"github.com/magician336/elena"
 )
 
 // writerChildSpec is one small schedule the writer tests run in-process.

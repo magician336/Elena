@@ -9,7 +9,7 @@ import (
 	"sort"
 	"testing"
 
-	"elena/internal/engine"
+	"github.com/magician336/elena/internal/engine"
 )
 
 // hintedState is the expected outcome of the hint-reopen fixture: the
