@@ -8,8 +8,8 @@ import (
 	"context"
 	"fmt"
 
-	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/magician336/elena"
+	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // ServerName is the MCP server implementation name the SDK advertises

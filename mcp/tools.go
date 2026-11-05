@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/magician336/elena"
+	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // registerTools declares the whole tool set: six tools over the elena
@@ -26,6 +26,75 @@ func (s *Server) registerTools() {
 		Name:        "read_trajectory",
 		Description: "Read a session's trajectory in sequence order: every event with its sequence number, append timestamp, and payload. With upto_seq the read is a point-in-time read — every event whose sequence number is at most upto_seq, endpoint included; without it the whole stored trajectory. An absent session reads empty; a timed session whose deadline has elapsed reads empty too, as if never written.",
 	}, s.readTrajectory)
+	mcpAddTool(s.sdk, &sdk.Tool{
+		Name:        "create_checkpoint",
+		Description: "Record one whole-store checkpoint: every live trajectory's reached sequence number and every session's deadline, written as one durable record. Returns the checkpoint's ID, which restore_checkpoint takes back.",
+	}, s.createCheckpoint)
+	mcpAddTool(s.sdk, &sdk.Tool{
+		Name:        "restore_checkpoint",
+		Description: "Restore one checkpoint by ID: the runtime view — every trajectory's sequence counter and the session table — resets to the recorded baseline, and appends afterwards continue from the baseline's sequence numbers. Events appended past the baseline stay on disk and stay visible to full reads; the restore touches no data. An unknown ID changes nothing and fails.",
+	}, s.restoreCheckpoint)
+}
+
+// createCheckpointIn is the create_checkpoint argument schema; the
+// checkpoint covers the whole store, so the call takes no arguments.
+type createCheckpointIn struct{}
+
+// createCheckpointOut is the create_checkpoint output schema.
+type createCheckpointOut struct {
+	CheckpointID uint64 `json:"checkpoint_id" jsonschema:"the ID of the recorded checkpoint"`
+}
+
+// createCheckpoint records the baseline through the public API.
+func (s *Server) createCheckpoint(_ context.Context, _ *sdk.CallToolRequest, _ createCheckpointIn) (*sdk.CallToolResult, createCheckpointOut, error) {
+	id, err := s.store.CreateCheckpoint()
+	if err != nil {
+		return nil, createCheckpointOut{}, fmt.Errorf("creating checkpoint: %w", err)
+	}
+	return nil, createCheckpointOut{CheckpointID: id}, nil
+}
+
+// restoreCheckpointIn is the restore_checkpoint argument schema.
+type restoreCheckpointIn struct {
+	CheckpointID uint64 `json:"checkpoint_id" jsonschema:"the ID of the checkpoint to restore"`
+}
+
+// restoredBaselineOut is one trajectory's line of a restored baseline.
+type restoredBaselineOut struct {
+	Namespace  string `json:"namespace" jsonschema:"the trajectory's namespace"`
+	Session    string `json:"session" jsonschema:"the session ID owning the trajectory"`
+	ReachedSeq uint64 `json:"reached_seq" jsonschema:"the sequence number the baseline recorded; a point-in-time read up to it sees exactly what the checkpoint saw"`
+}
+
+// restoreCheckpointOut is the restore_checkpoint output schema.
+type restoreCheckpointOut struct {
+	CheckpointID uint64                `json:"checkpoint_id" jsonschema:"the restored checkpoint's ID"`
+	Trajectories []restoredBaselineOut `json:"trajectories" jsonschema:"the baseline the restore reset to, one line per recorded trajectory"`
+}
+
+// restoreCheckpoint resets the runtime view to the recorded baseline
+// and echoes the manifest it restored, so the caller sees which
+// sequence numbers the next appends continue from.
+func (s *Server) restoreCheckpoint(_ context.Context, _ *sdk.CallToolRequest, in restoreCheckpointIn) (*sdk.CallToolResult, restoreCheckpointOut, error) {
+	if err := s.store.Restore(in.CheckpointID); err != nil {
+		return nil, restoreCheckpointOut{}, fmt.Errorf("restoring checkpoint %d: %w", in.CheckpointID, err)
+	}
+	manifest, err := s.store.Checkpoint(in.CheckpointID)
+	if err != nil {
+		return nil, restoreCheckpointOut{}, fmt.Errorf("reading checkpoint %d after restore: %w", in.CheckpointID, err)
+	}
+	out := restoreCheckpointOut{
+		CheckpointID: manifest.ID,
+		Trajectories: make([]restoredBaselineOut, 0, len(manifest.Trajectories)),
+	}
+	for _, baseline := range manifest.Trajectories {
+		out.Trajectories = append(out.Trajectories, restoredBaselineOut{
+			Namespace:  baseline.Namespace,
+			Session:    baseline.Session,
+			ReachedSeq: baseline.ReachedSeq,
+		})
+	}
+	return nil, out, nil
 }
 
 // readTrajectoryIn is the read_trajectory argument schema.

@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/magician336/elena"
+	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // session is the client-side seam every tool test drives: the server is
