@@ -289,6 +289,10 @@ Every claim above resolves to something you can open, run, or regenerate:
 - [`cmd/elena`](cmd/elena) — the diagnostic CLI: `status`, `dump`, `merge`,
   `checkpoint`, `restore` — thin orchestration of the public library API,
   no storage logic of its own.
+- [`mcp/`](mcp/) — the MCP interface module: one store directory as six
+  stdio tools — sessions, trajectories with point-in-time reads,
+  checkpoints, stats — for agent runtimes that speak MCP; the SDK
+  dependency stays in its own `go.mod`.
 - [`web/index.html`](web/index.html) — the static single-page demo:
   trajectory timeline, checkpoint recovery, the measured numbers —
   generated from the public API with a fixed seed, opens straight off the

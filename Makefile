@@ -7,14 +7,15 @@
 GO ?= go
 GOLANGCI_LINT ?= golangci-lint
 
-.PHONY: lint test race cov layering terms bench-test bench-cov bench-smoke
+.PHONY: lint test race cov layering terms bench-test bench-cov bench-smoke mcp-test mcp-cov
 
 # lint runs the standard golangci-lint linter set over the main module,
-# then the bench module — the same two surfaces CI lints, with the same
-# default configuration and command in both places.
+# then the bench and mcp modules — the same surfaces CI lints, with the
+# same default configuration and command in every place.
 lint:
 	$(GOLANGCI_LINT) run
 	cd bench && $(GOLANGCI_LINT) run
+	cd mcp && $(GOLANGCI_LINT) run
 
 # terms checks wording consistency over the files Git tracks:
 # project terminology follows GLOSSARY.md and no file carries
@@ -96,3 +97,17 @@ bench-smoke:
 	cd bench && $(GO) run ./cmd/bench --driver badger --ops 50 --value-size 256 --dir "$$(mktemp -d)/badger"
 	cd bench && $(GO) run ./cmd/bench --driver rosedb --ops 50 --value-size 256 --dir "$$(mktemp -d)/rosedb"
 	cd bench && $(GO) run ./cmd/matrix --engines elena,bbolt,badger,rosedb --mixes a --values 64 --keys 8 --run-ops 8 --sync-period 5ms --root "$$(mktemp -d)/matrix"
+
+# The mcp module is its own Go module (mcp/go.mod) so the SDK
+# dependency stays off the library; its gates run the same commands
+# locally as the CI mcp job does there.
+
+# mcp-test runs the mcp module's suite with the race detector.
+mcp-test:
+	cd mcp && $(GO) test -race ./...
+
+# mcp-cov runs the mcp module's suite with coverage and prints the
+# total (CI enforces the same >= 80% gate on it).
+mcp-cov:
+	cd mcp && $(GO) test -race -covermode=atomic -coverprofile=coverage.out ./...
+	cd mcp && $(GO) tool cover -func=coverage.out | tail -n 1
