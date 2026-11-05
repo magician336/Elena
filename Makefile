@@ -9,9 +9,12 @@ GOLANGCI_LINT ?= golangci-lint
 
 .PHONY: lint test race cov layering terms bench-test bench-cov bench-smoke
 
-# lint runs the standard golangci-lint linter set.
+# lint runs the standard golangci-lint linter set over the main module,
+# then the bench module — the same two surfaces CI lints, with the same
+# default configuration and command in both places.
 lint:
 	$(GOLANGCI_LINT) run
+	cd bench && $(GOLANGCI_LINT) run
 
 # terms checks wording consistency over the files Git tracks:
 # project terminology follows GLOSSARY.md and no file carries
