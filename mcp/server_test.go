@@ -51,7 +51,9 @@ func newSessionAt(t *testing.T, dir string) *session {
 	s := &session{t: t, client: clientSession, server: srv}
 	s.cleanup = func() {
 		_ = clientSession.Close()
-		serverSession.Wait()
+		if err := serverSession.Wait(); err != nil {
+			s.t.Errorf("server session ended with: %v", err)
+		}
 		_ = srv.Close()
 	}
 	t.Cleanup(s.cleanup)
