@@ -2,10 +2,12 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/magician336/elena"
 )
 
 // registerTools declares the whole tool set: six tools over the elena
@@ -20,6 +22,58 @@ func (s *Server) registerTools() {
 		Name:        "append_event",
 		Description: "Append one event to a session's trajectory and return the event's sequence number, starting at 1 and increasing by one per event. An absent session is created as a perpetual one; a timed session keeps its stored deadline. The payload is stored unmodified as the event's bytes.",
 	}, s.appendEvent)
+	mcpAddTool(s.sdk, &sdk.Tool{
+		Name:        "read_trajectory",
+		Description: "Read a session's trajectory in sequence order: every event with its sequence number, append timestamp, and payload. With upto_seq the read is a point-in-time read — every event whose sequence number is at most upto_seq, endpoint included; without it the whole stored trajectory. An absent session reads empty; a timed session whose deadline has elapsed reads empty too, as if never written.",
+	}, s.readTrajectory)
+}
+
+// readTrajectoryIn is the read_trajectory argument schema.
+type readTrajectoryIn struct {
+	Namespace string  `json:"namespace" jsonschema:"the session's namespace"`
+	Session   string  `json:"session" jsonschema:"the session's ID within its namespace"`
+	UptoSeq   *uint64 `json:"upto_seq,omitempty" jsonschema:"optional sequence ceiling for a point-in-time read; absent reads the whole trajectory"`
+}
+
+// trajectoryEventOut is one event of read_trajectory's output.
+type trajectoryEventOut struct {
+	Seq        uint64 `json:"seq" jsonschema:"the event's sequence number"`
+	AppendedAt string `json:"appended_at" jsonschema:"RFC3339 time the event was appended"`
+	Payload    string `json:"payload" jsonschema:"the event's stored bytes"`
+}
+
+// readTrajectoryOut is the read_trajectory output schema.
+type readTrajectoryOut struct {
+	Events []trajectoryEventOut `json:"events" jsonschema:"the trajectory's events in sequence order"`
+}
+
+// readTrajectory reads through the public API, one instant per call.
+func (s *Server) readTrajectory(_ context.Context, _ *sdk.CallToolRequest, in readTrajectoryIn) (*sdk.CallToolResult, readTrajectoryOut, error) {
+	sess, err := s.readHandle(in.Namespace, in.Session)
+	if errors.Is(err, errSessionAbsent) {
+		return nil, readTrajectoryOut{Events: []trajectoryEventOut{}}, nil
+	}
+	if err != nil {
+		return nil, readTrajectoryOut{}, err
+	}
+	var events []elena.Event
+	if in.UptoSeq != nil {
+		events, err = sess.EventsUpTo(*in.UptoSeq)
+	} else {
+		events, err = sess.Events()
+	}
+	if err != nil {
+		return nil, readTrajectoryOut{}, fmt.Errorf("reading trajectory %s/%s: %w", in.Namespace, in.Session, err)
+	}
+	out := readTrajectoryOut{Events: make([]trajectoryEventOut, 0, len(events))}
+	for _, ev := range events {
+		out.Events = append(out.Events, trajectoryEventOut{
+			Seq:        ev.Seq,
+			AppendedAt: ev.AppendedAt.Format(time.RFC3339),
+			Payload:    string(ev.Payload),
+		})
+	}
+	return nil, out, nil
 }
 
 // appendEventIn is the append_event argument schema.
