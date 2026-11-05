@@ -16,6 +16,35 @@ func (s *Server) registerTools() {
 		Name:        "create_session",
 		Description: "Create a session in a namespace, owning one append-only trajectory. Perpetual by default, or timed with a TTL in seconds whose single deadline covers the session's metadata and every event of its trajectory; once the deadline elapses the whole session reads as if never written. Creating an existing session of the same lifecycle form is idempotent; across forms it fails.",
 	}, s.createSession)
+	mcpAddTool(s.sdk, &sdk.Tool{
+		Name:        "append_event",
+		Description: "Append one event to a session's trajectory and return the event's sequence number, starting at 1 and increasing by one per event. An absent session is created as a perpetual one; a timed session keeps its stored deadline. The payload is stored unmodified as the event's bytes.",
+	}, s.appendEvent)
+}
+
+// appendEventIn is the append_event argument schema.
+type appendEventIn struct {
+	Namespace string `json:"namespace" jsonschema:"the session's namespace"`
+	Session   string `json:"session" jsonschema:"the session's ID within its namespace"`
+	Payload   string `json:"payload" jsonschema:"the event's payload as UTF-8 text, stored unmodified"`
+}
+
+// appendEventOut is the append_event output schema.
+type appendEventOut struct {
+	Seq uint64 `json:"seq" jsonschema:"the sequence number assigned to the appended event"`
+}
+
+// appendEvent appends one event through the public API.
+func (s *Server) appendEvent(_ context.Context, _ *sdk.CallToolRequest, in appendEventIn) (*sdk.CallToolResult, appendEventOut, error) {
+	sess, err := s.writeHandle(in.Namespace, in.Session)
+	if err != nil {
+		return nil, appendEventOut{}, err
+	}
+	seq, err := sess.Append([]byte(in.Payload))
+	if err != nil {
+		return nil, appendEventOut{}, fmt.Errorf("appending to %s/%s: %w", in.Namespace, in.Session, err)
+	}
+	return nil, appendEventOut{Seq: seq}, nil
 }
 
 // createSessionIn is the create_session argument schema.
