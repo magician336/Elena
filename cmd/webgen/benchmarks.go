@@ -54,6 +54,7 @@ type MergeWindow struct {
 	WallMs           float64 `json:"wall_ms"`
 	P50LowMs         float64 `json:"p50_low_ms"`
 	P50HighMs        float64 `json:"p50_high_ms"`
+	Windows          int     `json:"windows"`
 	AppendsObserved  int     `json:"appends_observed"`
 	ReadsObserved    int     `json:"reads_observed"`
 }
@@ -296,7 +297,7 @@ func groupCommitJump(doc matrixDoc) (GroupCommitJump, error) {
 // the wall time, the min/max append P50 across every window, and how
 // much load the curve observed.
 func mergeWindow(doc mergeCurveDoc) MergeWindow {
-	out := MergeWindow{WallMs: roundMs(doc.Result.MergeElapsedNs)}
+	out := MergeWindow{WallMs: roundMs(doc.Result.MergeElapsedNs), Windows: len(doc.Result.Points)}
 	for _, p := range doc.Result.Points {
 		out.AppendsObserved += p.Appends
 		out.ReadsObserved += p.Reads

@@ -94,6 +94,9 @@ func TestDistillBenchmarksFromFixture(t *testing.T) {
 		t.Fatalf("observed = %d appends / %d reads, want 330 / 329 (the fixture's sums)",
 			got.MergeWindow.AppendsObserved, got.MergeWindow.ReadsObserved)
 	}
+	if got.MergeWindow.Windows != 3 {
+		t.Fatalf("windows = %d, want the fixture's 3", got.MergeWindow.Windows)
+	}
 
 	if !approxEqual(got.StartupPair.HintOpenMs, 295.6) || !approxEqual(got.StartupPair.NoHintOpenMs, 469.7) {
 		t.Fatalf("startup pair = %+v, want 295.6 vs 469.7 ms", got.StartupPair)
