@@ -324,8 +324,8 @@ func curvePoint(doc curveDoc, concurrency int) (float64, error) {
 
 // distillBenchmarks reads the checked-in raw documents in dataDir and
 // reduces them to the page's number set. Any missing document or
-// missing cell is an error: the page never shows a number it cannot
-// trace.
+// missing cell is an error: every figure on the page must be
+// followable to the raw document it came from.
 func distillBenchmarks(dataDir string) (Benchmarks, error) {
 	var matrix matrixDoc
 	if err := loadJSON(filepath.Join(dataDir, "matrix-grid.json"), &matrix); err != nil {
