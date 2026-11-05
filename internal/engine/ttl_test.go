@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"elena/internal/engine"
+	"github.com/magician336/elena/internal/engine"
 )
 
 // shortTTL is long enough to stay comfortably unexpired across an

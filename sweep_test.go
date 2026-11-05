@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"elena"
+	"github.com/magician336/elena"
 )
 
 // waitForStats polls Stats until cond passes, failing the test when the
@@ -303,7 +303,8 @@ func TestSweepTracksStoredTimedSessionsAcrossOpen(t *testing.T) {
 // store — the engine reports only live entries — so the sweep's initial
 // deadline view cannot know it: the boundary is visibility immediate,
 // physical reclamation punctual only with a sweep signal. The residue
-// lingers on disk (replay still counts it) while the sweep idles, and
+// lingers on disk (the reopen path still counts it) while the sweep
+// idles, and
 // the next signal's merge — which drops every expired entry on disk —
 // reclaims the residue along with its own session.
 func TestSweepReclaimsRestartResidueOnNextSignal(t *testing.T) {

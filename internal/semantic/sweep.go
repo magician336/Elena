@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"elena/internal/engine"
+	"github.com/magician336/elena/internal/engine"
 )
 
 // collectDeadlines builds the sweep's initial deadline view: one scan

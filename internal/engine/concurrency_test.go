@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"elena/internal/engine"
+	"github.com/magician336/elena/internal/engine"
 )
 
 // Single writer, many readers: while one goroutine keeps writing new

@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"elena/internal/engine"
+	"github.com/magician336/elena/internal/engine"
 )
 
 // A key written through Put must be readable back through Get with the
@@ -183,9 +183,9 @@ func TestPutRejectsOversizedKeyAndValue(t *testing.T) {
 	}
 }
 
-// A rejected oversized write must leave no trace: the key stays
+// A rejected oversized write must leave nothing behind: the key stays
 // unreadable and nothing durable is appended.
-func TestPutOversizedLeavesNoTrace(t *testing.T) {
+func TestPutOversizedLeavesNothingBehind(t *testing.T) {
 	dir := t.TempDir()
 
 	eng, err := engine.Open(dir, engine.Options{MaxValueSize: 8})

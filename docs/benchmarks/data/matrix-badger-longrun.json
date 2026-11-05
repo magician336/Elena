@@ -1,0 +1,62 @@
+{
+  "declaration": {
+    "workload": "one seed declares every workload: each engine and tier drives the identical load-then-run operation sequence the seeded generator emits, so driver differences never leak into workload semantics",
+    "elena_mapping": "one key is one trajectory (namespace bench, session traj-\u003ckey\u003e); an update appends the trajectory's next event; a read is the single-event read of the latest acknowledged event. The elena data set grows monotonically — an update is a new event, never an in-place overwrite — while the KV engines overwrite in place; that difference is elena's append-only semantics, declared here rather than hidden",
+    "sync": [
+      {
+        "engine": "badger",
+        "tiers": [
+          {
+            "tier": "per-write-sync",
+            "aligned": true,
+            "configuration": "SyncWrites set to true: badger msyncs the write-ahead value log after every write, the tier its option documentation scopes as surviving hard reboots (the v4 default is false; set explicitly)"
+          },
+          {
+            "tier": "group-commit",
+            "aligned": false,
+            "configuration": "badger exposes no periodic-sync configuration (SyncWrites false drops to plain mmap writes), so this tier produces no badger numbers"
+          }
+        ]
+      }
+    ]
+  },
+  "results": [
+    {
+      "engine": "badger",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-a",
+      "value_size": 1024,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 100000,
+          "elapsed_ns": 536361719273,
+          "throughput_ops_sec": 186.44134435161195,
+          "latency": {
+            "count": 100000,
+            "min_ns": 3592425,
+            "p50_ns": 4540701,
+            "p99_ns": 8708564,
+            "p999_ns": 21234884,
+            "max_ns": 46485427
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 460000,
+          "elapsed_ns": 1742792262458,
+          "throughput_ops_sec": 263.9442519392558,
+          "latency": {
+            "count": 460000,
+            "min_ns": 649,
+            "p50_ns": 3862902,
+            "p99_ns": 13840775,
+            "p999_ns": 37850524,
+            "max_ns": 1521502083
+          }
+        }
+      ]
+    }
+  ],
+  "failures": []
+}

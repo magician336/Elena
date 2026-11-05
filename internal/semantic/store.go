@@ -13,7 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"elena/internal/engine"
+	"github.com/magician336/elena/internal/engine"
 )
 
 // ErrDirectoryLocked is returned by Open when the target directory is
@@ -50,6 +50,19 @@ type Config struct {
 	// their bytes come back only when some merge runs (a manual Merge,
 	// or any signal another Open's sweep fires).
 	SweepDisabled bool
+
+	// SyncPolicy selects when appended entries are fdatasync'ed — the
+	// durability/throughput trade-off, fixed for the lifetime of the
+	// store this Open creates. The zero value selects SyncAlways, the
+	// default; SyncInterval additionally requires a positive SyncPeriod
+	// (Open rejects it with an error wrapping ErrInvalidSyncPeriod
+	// otherwise).
+	SyncPolicy SyncPolicy
+
+	// SyncPeriod is the group-commit period of the SyncInterval policy:
+	// the background flusher fdatasyncs the active data file once per
+	// period. Ignored by the other policies.
+	SyncPeriod time.Duration
 }
 
 // Store is a trajectory store rooted at one directory and driving one
@@ -98,13 +111,20 @@ type Store struct {
 // needed, under the configuration cfg. The store holds an exclusive
 // lock on the directory for its lifetime; a second Open of the same
 // directory fails with an error wrapping ErrDirectoryLocked until Close
-// releases it. Events acknowledged before Close return are durable: the
-// engine runs with its strictest sync policy.
+// releases it. Events acknowledged before Close return are durable
+// under the default sync policy: the engine runs with the configured
+// policy — always, its strictest tier, by default.
 func Open(dir string, cfg Config) (*Store, error) {
 	if !cfg.SweepDisabled && cfg.SweepPeriod < 0 {
 		return nil, fmt.Errorf("elena: open %q: sweep period %d: %w", dir, cfg.SweepPeriod, ErrInvalidSweepPeriod)
 	}
-	eng, err := engine.Open(dir, engine.Options{})
+	if cfg.SyncPolicy == SyncInterval && cfg.SyncPeriod <= 0 {
+		return nil, fmt.Errorf("elena: open %q: sync period %d: %w", dir, cfg.SyncPeriod, ErrInvalidSyncPeriod)
+	}
+	eng, err := engine.Open(dir, engine.Options{
+		SyncPolicy: cfg.SyncPolicy,
+		SyncPeriod: cfg.SyncPeriod,
+	})
 	if err != nil {
 		if errors.Is(err, engine.ErrDirectoryLocked) {
 			return nil, fmt.Errorf("elena: open %q: %w", dir, ErrDirectoryLocked)

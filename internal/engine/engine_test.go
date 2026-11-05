@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"elena/internal/engine"
+	"github.com/magician336/elena/internal/engine"
 )
 
 // closeEngine closes eng and reports any failure through t. A nil eng

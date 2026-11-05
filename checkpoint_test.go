@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"elena"
+	"github.com/magician336/elena"
 )
 
 // CreateCheckpoint must hand out IDs that increase with creation order,
@@ -490,7 +490,7 @@ func TestBatchCommitAfterTTLElapseFailsWhole(t *testing.T) {
 // Staging failures must leave nothing behind: an append rejected at
 // staging allocates no sequence number, so the trajectory continues
 // without a hole, and the store holds no checkpoint.
-func TestBatchStagingFailuresLeaveNoTrace(t *testing.T) {
+func TestBatchStagingFailuresLeaveNothingBehind(t *testing.T) {
 	st := openStore(t)
 	other := openStore(t)
 	sess := createSession(t, st, "runs", "alpha")

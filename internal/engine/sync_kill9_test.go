@@ -7,7 +7,7 @@ import (
 	"errors"
 	"testing"
 
-	"elena/internal/engine"
+	"github.com/magician336/elena/internal/engine"
 )
 
 // Kill -9 under the non-always tiers. What these scenarios prove — and

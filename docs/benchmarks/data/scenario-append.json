@@ -1,0 +1,24 @@
+{
+  "results": [
+    {
+      "driver": "elena",
+      "workload": "elena-append-only",
+      "phases": [
+        {
+          "phase": "append-only",
+          "ops": 300800,
+          "elapsed_ns": 2009996537169,
+          "throughput_ops_sec": 149.65199911421976,
+          "latency": {
+            "count": 300800,
+            "min_ns": 2887932,
+            "p50_ns": 6981312,
+            "p99_ns": 15233644,
+            "p999_ns": 38117028,
+            "max_ns": 695737992
+          }
+        }
+      ]
+    }
+  ]
+}

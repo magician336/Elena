@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"elena"
+	"github.com/magician336/elena"
 )
 
 // overwriteOneEvent leaves one dead event on disk through the public

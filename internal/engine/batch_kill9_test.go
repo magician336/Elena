@@ -7,7 +7,7 @@ import (
 	"errors"
 	"testing"
 
-	"elena/internal/engine"
+	"github.com/magician336/elena/internal/engine"
 )
 
 // The kill -9 proof of batch durable atomicity: a child process commits

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"elena"
+	"github.com/magician336/elena"
 )
 
 // checkpointAfterKill simulates the kill-recovery scenario through the

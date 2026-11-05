@@ -1,0 +1,10 @@
+timing convention: kill->open counts SIGKILL delivery through child teardown and reap to Open returning; open->first-read counts Open returning to the first acknowledged event read back byte-exact; kill->first-read is their sum
+tier 256mb (268435456 bytes = 4096 events x 65536B) run 1/2: acked 4096, kill->open 151.228ms, open->first-read 15.082ms, kill->first-read 166.309ms
+tier 256mb (268435456 bytes = 4096 events x 65536B) run 2/2: acked 4096, kill->open 157.504ms, open->first-read 18.666ms, kill->first-read 176.169ms
+tier 256mb stability: kill->first-read 166.309ms vs 176.169ms, ratio 1.06 — within one order of magnitude
+tier 1gb (1073741824 bytes = 16384 events x 65536B) run 1/2: acked 16384, kill->open 523.046ms, open->first-read 57.794ms, kill->first-read 580.84ms
+tier 1gb (1073741824 bytes = 16384 events x 65536B) run 2/2: acked 16384, kill->open 644.801ms, open->first-read 58.427ms, kill->first-read 703.228ms
+tier 1gb stability: kill->first-read 580.84ms vs 703.228ms, ratio 1.21 — within one order of magnitude
+tier 4gb (4294967296 bytes = 65536 events x 65536B) run 1/2: acked 65536, kill->open 7.534947s, open->first-read 304.335ms, kill->first-read 7.839282s
+tier 4gb (4294967296 bytes = 65536 events x 65536B) run 2/2: acked 65536, kill->open 9.813513s, open->first-read 766.48ms, kill->first-read 10.579993s
+tier 4gb stability: kill->first-read 7.839282s vs 10.579993s, ratio 1.35 — within one order of magnitude

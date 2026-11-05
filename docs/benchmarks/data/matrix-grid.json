@@ -1,0 +1,2771 @@
+{
+  "declaration": {
+    "workload": "one seed declares every workload: each engine and tier drives the identical load-then-run operation sequence the seeded generator emits, so driver differences never leak into workload semantics",
+    "elena_mapping": "one key is one trajectory (namespace bench, session traj-\u003ckey\u003e); an update appends the trajectory's next event; a read is the single-event read of the latest acknowledged event. The elena data set grows monotonically — an update is a new event, never an in-place overwrite — while the KV engines overwrite in place; that difference is elena's append-only semantics, declared here rather than hidden",
+    "sync": [
+      {
+        "engine": "elena",
+        "tiers": [
+          {
+            "tier": "per-write-sync",
+            "aligned": true,
+            "configuration": "every append fdatasync'ed to the data file before it acknowledges (elena.WithSyncAlways, the store default)"
+          },
+          {
+            "tier": "group-commit",
+            "aligned": true,
+            "configuration": "appends acknowledge after the write; a background flusher fdatasyncs the active data file once per 10ms (elena.WithSyncInterval; the final flush is forced at close and at every rotation)"
+          }
+        ]
+      },
+      {
+        "engine": "bbolt",
+        "tiers": [
+          {
+            "tier": "per-write-sync",
+            "aligned": true,
+            "configuration": "every append commits as its own write transaction under bbolt's default sync-on-commit (Options.NoSync left false)"
+          },
+          {
+            "tier": "group-commit",
+            "aligned": false,
+            "configuration": "bbolt exposes no periodic-sync configuration (NoSync only turns syncing off), so this tier produces no bbolt numbers"
+          }
+        ]
+      },
+      {
+        "engine": "badger",
+        "tiers": [
+          {
+            "tier": "per-write-sync",
+            "aligned": true,
+            "configuration": "SyncWrites set to true: badger msyncs the write-ahead value log after every write, the tier its option documentation scopes as surviving hard reboots (the v4 default is false; set explicitly)"
+          },
+          {
+            "tier": "group-commit",
+            "aligned": false,
+            "configuration": "badger exposes no periodic-sync configuration (SyncWrites false drops to plain mmap writes), so this tier produces no badger numbers"
+          }
+        ]
+      },
+      {
+        "engine": "rosedb",
+        "tiers": [
+          {
+            "tier": "per-write-sync",
+            "aligned": true,
+            "configuration": "every append runs as one batch with Sync=true, whose commit fsyncs the write-ahead log before it acknowledges (the DB-level Sync flag stays false — in rosedb v2 it governs a write-ahead path the batch operations never ride, and it disables the batch-level sync)"
+          },
+          {
+            "tier": "group-commit",
+            "aligned": false,
+            "configuration": "rosedb's BytesPerSync flushes by accumulated bytes rather than by a time period, which is not this tier, so it produces no rosedb numbers"
+          }
+        ]
+      }
+    ]
+  },
+  "results": [
+    {
+      "engine": "elena",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-a",
+      "value_size": 64,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 90612323122,
+          "throughput_ops_sec": 110.36026508818284,
+          "latency": {
+            "count": 10000,
+            "min_ns": 7600767,
+            "p50_ns": 8806439,
+            "p99_ns": 15396136,
+            "p999_ns": 17744142,
+            "max_ns": 56453244
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 21138122404,
+          "throughput_ops_sec": 473.0789144312876,
+          "latency": {
+            "count": 10000,
+            "min_ns": 477,
+            "p50_ns": 77750,
+            "p99_ns": 4829725,
+            "p999_ns": 11068931,
+            "max_ns": 14525439
+          }
+        }
+      ]
+    },
+    {
+      "engine": "elena",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-a",
+      "value_size": 256,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 90502171425,
+          "throughput_ops_sec": 110.49458640102458,
+          "latency": {
+            "count": 10000,
+            "min_ns": 7716738,
+            "p50_ns": 8826647,
+            "p99_ns": 14337765,
+            "p999_ns": 17657186,
+            "max_ns": 25940039
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 21312966645,
+          "throughput_ops_sec": 469.1979378828517,
+          "latency": {
+            "count": 10000,
+            "min_ns": 743,
+            "p50_ns": 222357,
+            "p99_ns": 4861544,
+            "p999_ns": 11824590,
+            "max_ns": 15815267
+          }
+        }
+      ]
+    },
+    {
+      "engine": "elena",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-a",
+      "value_size": 1024,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 90045804093,
+          "throughput_ops_sec": 111.05459161286319,
+          "latency": {
+            "count": 10000,
+            "min_ns": 7204700,
+            "p50_ns": 8801488,
+            "p99_ns": 13228811,
+            "p999_ns": 17901851,
+            "max_ns": 24140679
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 34206987492,
+          "throughput_ops_sec": 292.3379324864168,
+          "latency": {
+            "count": 10000,
+            "min_ns": 799,
+            "p50_ns": 65735,
+            "p99_ns": 12003446,
+            "p999_ns": 17604627,
+            "max_ns": 52511291
+          }
+        }
+      ]
+    },
+    {
+      "engine": "elena",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-a",
+      "value_size": 4096,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 146950617876,
+          "throughput_ops_sec": 68.05007113640181,
+          "latency": {
+            "count": 10000,
+            "min_ns": 10200251,
+            "p50_ns": 14197414,
+            "p99_ns": 25335883,
+            "p999_ns": 51291006,
+            "max_ns": 783028670
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 35822067409,
+          "throughput_ops_sec": 279.1575339810673,
+          "latency": {
+            "count": 10000,
+            "min_ns": 3069,
+            "p50_ns": 5078997,
+            "p99_ns": 9821259,
+            "p999_ns": 35947592,
+            "max_ns": 38816449
+          }
+        }
+      ]
+    },
+    {
+      "engine": "elena",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-a",
+      "value_size": 16384,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 148740689618,
+          "throughput_ops_sec": 67.23109880478758,
+          "latency": {
+            "count": 10000,
+            "min_ns": 10096689,
+            "p50_ns": 14501295,
+            "p99_ns": 24192875,
+            "p999_ns": 46995841,
+            "max_ns": 77112998
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 37518608608,
+          "throughput_ops_sec": 266.53440441999027,
+          "latency": {
+            "count": 10000,
+            "min_ns": 8555,
+            "p50_ns": 216465,
+            "p99_ns": 8964221,
+            "p999_ns": 17335632,
+            "max_ns": 71214931
+          }
+        }
+      ]
+    },
+    {
+      "engine": "elena",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-b",
+      "value_size": 64,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 148584659119,
+          "throughput_ops_sec": 67.30169897277953,
+          "latency": {
+            "count": 10000,
+            "min_ns": 12800185,
+            "p50_ns": 14404607,
+            "p99_ns": 25986380,
+            "p999_ns": 40440978,
+            "max_ns": 114167808
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 3755349190,
+          "throughput_ops_sec": 2662.8682165239607,
+          "latency": {
+            "count": 10000,
+            "min_ns": 479,
+            "p50_ns": 2490,
+            "p99_ns": 7355178,
+            "p999_ns": 13448102,
+            "max_ns": 37391870
+          }
+        }
+      ]
+    },
+    {
+      "engine": "elena",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-b",
+      "value_size": 256,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 158862821001,
+          "throughput_ops_sec": 62.947390314421355,
+          "latency": {
+            "count": 10000,
+            "min_ns": 12796888,
+            "p50_ns": 14546022,
+            "p99_ns": 45554241,
+            "p999_ns": 59177269,
+            "max_ns": 118398074
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 3616322026,
+          "throughput_ops_sec": 2765.2404647881876,
+          "latency": {
+            "count": 10000,
+            "min_ns": 521,
+            "p50_ns": 3057,
+            "p99_ns": 7133215,
+            "p999_ns": 12984648,
+            "max_ns": 38767413
+          }
+        }
+      ]
+    },
+    {
+      "engine": "elena",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-b",
+      "value_size": 1024,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 159209376723,
+          "throughput_ops_sec": 62.81037088285618,
+          "latency": {
+            "count": 10000,
+            "min_ns": 12899306,
+            "p50_ns": 14798629,
+            "p99_ns": 45521057,
+            "p999_ns": 48323160,
+            "max_ns": 190400605
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 3867723937,
+          "throughput_ops_sec": 2585.499938177206,
+          "latency": {
+            "count": 10000,
+            "min_ns": 464,
+            "p50_ns": 3313,
+            "p99_ns": 7506928,
+            "p999_ns": 15266259,
+            "max_ns": 27634138
+          }
+        }
+      ]
+    },
+    {
+      "engine": "elena",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-b",
+      "value_size": 4096,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 157131002484,
+          "throughput_ops_sec": 63.64116464552092,
+          "latency": {
+            "count": 10000,
+            "min_ns": 12892959,
+            "p50_ns": 14917054,
+            "p99_ns": 32964466,
+            "p999_ns": 52332509,
+            "max_ns": 189681193
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 3938381759,
+          "throughput_ops_sec": 2539.1139335713137,
+          "latency": {
+            "count": 10000,
+            "min_ns": 1494,
+            "p50_ns": 6380,
+            "p99_ns": 7801506,
+            "p999_ns": 14092930,
+            "max_ns": 27737447
+          }
+        }
+      ]
+    },
+    {
+      "engine": "elena",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-b",
+      "value_size": 16384,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 162319842480,
+          "throughput_ops_sec": 61.606762594241275,
+          "latency": {
+            "count": 10000,
+            "min_ns": 12804080,
+            "p50_ns": 14958926,
+            "p99_ns": 30597742,
+            "p999_ns": 104030060,
+            "max_ns": 880818889
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 4164523890,
+          "throughput_ops_sec": 2401.2348744144197,
+          "latency": {
+            "count": 10000,
+            "min_ns": 5437,
+            "p50_ns": 15560,
+            "p99_ns": 7503794,
+            "p999_ns": 13154862,
+            "max_ns": 19029698
+          }
+        }
+      ]
+    },
+    {
+      "engine": "elena",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-c",
+      "value_size": 64,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 158289862117,
+          "throughput_ops_sec": 63.175239818002346,
+          "latency": {
+            "count": 10000,
+            "min_ns": 12288324,
+            "p50_ns": 14732208,
+            "p99_ns": 30124096,
+            "p999_ns": 57800727,
+            "max_ns": 464284098
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 9717692,
+          "throughput_ops_sec": 1029050.9310235393,
+          "latency": {
+            "count": 10000,
+            "min_ns": 327,
+            "p50_ns": 919,
+            "p99_ns": 2376,
+            "p999_ns": 8445,
+            "max_ns": 188895
+          }
+        }
+      ]
+    },
+    {
+      "engine": "elena",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-c",
+      "value_size": 256,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 160964793502,
+          "throughput_ops_sec": 62.125386442817074,
+          "latency": {
+            "count": 10000,
+            "min_ns": 12486560,
+            "p50_ns": 14877631,
+            "p99_ns": 45175459,
+            "p999_ns": 57391146,
+            "max_ns": 247262548
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 12443592,
+          "throughput_ops_sec": 803626.476985102,
+          "latency": {
+            "count": 10000,
+            "min_ns": 487,
+            "p50_ns": 983,
+            "p99_ns": 3140,
+            "p999_ns": 9127,
+            "max_ns": 20803
+          }
+        }
+      ]
+    },
+    {
+      "engine": "elena",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-c",
+      "value_size": 1024,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 164718088354,
+          "throughput_ops_sec": 60.70978664169982,
+          "latency": {
+            "count": 10000,
+            "min_ns": 12798544,
+            "p50_ns": 14891446,
+            "p99_ns": 45341806,
+            "p999_ns": 155009076,
+            "max_ns": 846020162
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 50409850,
+          "throughput_ops_sec": 198373.9289047676,
+          "latency": {
+            "count": 10000,
+            "min_ns": 529,
+            "p50_ns": 1317,
+            "p99_ns": 109594,
+            "p999_ns": 358987,
+            "max_ns": 2778641
+          }
+        }
+      ]
+    },
+    {
+      "engine": "elena",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-c",
+      "value_size": 4096,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 163992877662,
+          "throughput_ops_sec": 60.97825797417038,
+          "latency": {
+            "count": 10000,
+            "min_ns": 12697744,
+            "p50_ns": 15049299,
+            "p99_ns": 31087391,
+            "p999_ns": 145380364,
+            "max_ns": 1214076151
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 30418302,
+          "throughput_ops_sec": 328749.4482762384,
+          "latency": {
+            "count": 10000,
+            "min_ns": 1426,
+            "p50_ns": 2750,
+            "p99_ns": 8832,
+            "p999_ns": 13054,
+            "max_ns": 26566
+          }
+        }
+      ]
+    },
+    {
+      "engine": "elena",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-c",
+      "value_size": 16384,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 161377997702,
+          "throughput_ops_sec": 61.966315993497226,
+          "latency": {
+            "count": 10000,
+            "min_ns": 12999053,
+            "p50_ns": 15295021,
+            "p99_ns": 30599323,
+            "p999_ns": 60794760,
+            "max_ns": 171356449
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 98703878,
+          "throughput_ops_sec": 101313.14192133363,
+          "latency": {
+            "count": 10000,
+            "min_ns": 5423,
+            "p50_ns": 8756,
+            "p99_ns": 45946,
+            "p999_ns": 72958,
+            "max_ns": 345118
+          }
+        }
+      ]
+    },
+    {
+      "engine": "elena",
+      "sync_tier": "group-commit",
+      "mix": "ycsb-a",
+      "value_size": 64,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 11258709748,
+          "throughput_ops_sec": 888.2012436439622,
+          "latency": {
+            "count": 10000,
+            "min_ns": 7699,
+            "p50_ns": 290249,
+            "p99_ns": 8996418,
+            "p999_ns": 13863268,
+            "max_ns": 19019621
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 88795060,
+          "throughput_ops_sec": 112618.87767179841,
+          "latency": {
+            "count": 10000,
+            "min_ns": 364,
+            "p50_ns": 1646,
+            "p99_ns": 5724,
+            "p999_ns": 22379,
+            "max_ns": 8471107
+          }
+        }
+      ]
+    },
+    {
+      "engine": "elena",
+      "sync_tier": "group-commit",
+      "mix": "ycsb-a",
+      "value_size": 256,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 8357907444,
+          "throughput_ops_sec": 1196.4717325481786,
+          "latency": {
+            "count": 10000,
+            "min_ns": 5635,
+            "p50_ns": 221030,
+            "p99_ns": 8486696,
+            "p999_ns": 13587188,
+            "max_ns": 43416943
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 95347640,
+          "throughput_ops_sec": 104879.36565603512,
+          "latency": {
+            "count": 10000,
+            "min_ns": 385,
+            "p50_ns": 2013,
+            "p99_ns": 8491,
+            "p999_ns": 22107,
+            "max_ns": 16068183
+          }
+        }
+      ]
+    },
+    {
+      "engine": "elena",
+      "sync_tier": "group-commit",
+      "mix": "ycsb-a",
+      "value_size": 1024,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 12859556545,
+          "throughput_ops_sec": 777.631791967831,
+          "latency": {
+            "count": 10000,
+            "min_ns": 6564,
+            "p50_ns": 304236,
+            "p99_ns": 9580122,
+            "p999_ns": 15600919,
+            "max_ns": 72304079
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 97013221,
+          "throughput_ops_sec": 103078.73397997991,
+          "latency": {
+            "count": 10000,
+            "min_ns": 579,
+            "p50_ns": 2775,
+            "p99_ns": 10942,
+            "p999_ns": 31235,
+            "max_ns": 14614327
+          }
+        }
+      ]
+    },
+    {
+      "engine": "elena",
+      "sync_tier": "group-commit",
+      "mix": "ycsb-a",
+      "value_size": 4096,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 11237962357,
+          "throughput_ops_sec": 889.8410301019661,
+          "latency": {
+            "count": 10000,
+            "min_ns": 13540,
+            "p50_ns": 253880,
+            "p99_ns": 9423469,
+            "p999_ns": 17327075,
+            "max_ns": 103913296
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 221927193,
+          "throughput_ops_sec": 45059.82284018705,
+          "latency": {
+            "count": 10000,
+            "min_ns": 1483,
+            "p50_ns": 5868,
+            "p99_ns": 19051,
+            "p999_ns": 8703834,
+            "max_ns": 17218903
+          }
+        }
+      ]
+    },
+    {
+      "engine": "elena",
+      "sync_tier": "group-commit",
+      "mix": "ycsb-a",
+      "value_size": 16384,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 12425771432,
+          "throughput_ops_sec": 804.7790074624319,
+          "latency": {
+            "count": 10000,
+            "min_ns": 21476,
+            "p50_ns": 277029,
+            "p99_ns": 9470849,
+            "p999_ns": 15993854,
+            "max_ns": 61490094
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 471759693,
+          "throughput_ops_sec": 21197.2327190742,
+          "latency": {
+            "count": 10000,
+            "min_ns": 5525,
+            "p50_ns": 13113,
+            "p99_ns": 39984,
+            "p999_ns": 12950164,
+            "max_ns": 56935515
+          }
+        }
+      ]
+    },
+    {
+      "engine": "elena",
+      "sync_tier": "group-commit",
+      "mix": "ycsb-b",
+      "value_size": 64,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 12168739342,
+          "throughput_ops_sec": 821.777812717652,
+          "latency": {
+            "count": 10000,
+            "min_ns": 5496,
+            "p50_ns": 283108,
+            "p99_ns": 9317893,
+            "p999_ns": 15724467,
+            "max_ns": 29757132
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 79529072,
+          "throughput_ops_sec": 125740.18215628115,
+          "latency": {
+            "count": 10000,
+            "min_ns": 812,
+            "p50_ns": 1468,
+            "p99_ns": 5490,
+            "p999_ns": 18189,
+            "max_ns": 8250745
+          }
+        }
+      ]
+    },
+    {
+      "engine": "elena",
+      "sync_tier": "group-commit",
+      "mix": "ycsb-b",
+      "value_size": 256,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 12079289064,
+          "throughput_ops_sec": 827.86329121,
+          "latency": {
+            "count": 10000,
+            "min_ns": 4642,
+            "p50_ns": 329823,
+            "p99_ns": 8860855,
+            "p999_ns": 13958757,
+            "max_ns": 158235812
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 97563577,
+          "throughput_ops_sec": 102497.26698724873,
+          "latency": {
+            "count": 10000,
+            "min_ns": 802,
+            "p50_ns": 1678,
+            "p99_ns": 8256,
+            "p999_ns": 20344,
+            "max_ns": 13237459
+          }
+        }
+      ]
+    },
+    {
+      "engine": "elena",
+      "sync_tier": "group-commit",
+      "mix": "ycsb-b",
+      "value_size": 1024,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 11438033070,
+          "throughput_ops_sec": 874.2761923138941,
+          "latency": {
+            "count": 10000,
+            "min_ns": 5131,
+            "p50_ns": 268163,
+            "p99_ns": 9183163,
+            "p999_ns": 14098986,
+            "max_ns": 18383208
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 101502151,
+          "throughput_ops_sec": 98520.07963850934,
+          "latency": {
+            "count": 10000,
+            "min_ns": 1050,
+            "p50_ns": 2051,
+            "p99_ns": 10948,
+            "p999_ns": 32015,
+            "max_ns": 14496970
+          }
+        }
+      ]
+    },
+    {
+      "engine": "elena",
+      "sync_tier": "group-commit",
+      "mix": "ycsb-b",
+      "value_size": 4096,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 11309079067,
+          "throughput_ops_sec": 884.2452989103325,
+          "latency": {
+            "count": 10000,
+            "min_ns": 10457,
+            "p50_ns": 268172,
+            "p99_ns": 9027109,
+            "p999_ns": 14889840,
+            "max_ns": 70408066
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 249975249,
+          "throughput_ops_sec": 40003.9605521105,
+          "latency": {
+            "count": 10000,
+            "min_ns": 1726,
+            "p50_ns": 5317,
+            "p99_ns": 17878,
+            "p999_ns": 7855923,
+            "max_ns": 13715023
+          }
+        }
+      ]
+    },
+    {
+      "engine": "elena",
+      "sync_tier": "group-commit",
+      "mix": "ycsb-b",
+      "value_size": 16384,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 13389798144,
+          "throughput_ops_sec": 746.8372482135605,
+          "latency": {
+            "count": 10000,
+            "min_ns": 18412,
+            "p50_ns": 291771,
+            "p99_ns": 9562381,
+            "p999_ns": 16044360,
+            "max_ns": 69847586
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 499166740,
+          "throughput_ops_sec": 20033.38603850088,
+          "latency": {
+            "count": 10000,
+            "min_ns": 5613,
+            "p50_ns": 13281,
+            "p99_ns": 33912,
+            "p999_ns": 9217831,
+            "max_ns": 26975079
+          }
+        }
+      ]
+    },
+    {
+      "engine": "elena",
+      "sync_tier": "group-commit",
+      "mix": "ycsb-c",
+      "value_size": 64,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 11740271546,
+          "throughput_ops_sec": 851.7690549846844,
+          "latency": {
+            "count": 10000,
+            "min_ns": 7552,
+            "p50_ns": 272020,
+            "p99_ns": 9198450,
+            "p999_ns": 14014898,
+            "max_ns": 20510351
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 8659384,
+          "throughput_ops_sec": 1154816.5550805924,
+          "latency": {
+            "count": 10000,
+            "min_ns": 333,
+            "p50_ns": 655,
+            "p99_ns": 2193,
+            "p999_ns": 4930,
+            "max_ns": 13504
+          }
+        }
+      ]
+    },
+    {
+      "engine": "elena",
+      "sync_tier": "group-commit",
+      "mix": "ycsb-c",
+      "value_size": 256,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 10308920721,
+          "throughput_ops_sec": 970.033650528449,
+          "latency": {
+            "count": 10000,
+            "min_ns": 5200,
+            "p50_ns": 250415,
+            "p99_ns": 8924905,
+            "p999_ns": 14826672,
+            "max_ns": 92862629
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 25043332,
+          "throughput_ops_sec": 399307.8876245381,
+          "latency": {
+            "count": 10000,
+            "min_ns": 349,
+            "p50_ns": 649,
+            "p99_ns": 6659,
+            "p999_ns": 333628,
+            "max_ns": 1957301
+          }
+        }
+      ]
+    },
+    {
+      "engine": "elena",
+      "sync_tier": "group-commit",
+      "mix": "ycsb-c",
+      "value_size": 1024,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 11159611429,
+          "throughput_ops_sec": 896.0885478515347,
+          "latency": {
+            "count": 10000,
+            "min_ns": 4541,
+            "p50_ns": 273713,
+            "p99_ns": 9084371,
+            "p999_ns": 13801375,
+            "max_ns": 26447749
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 11545040,
+          "throughput_ops_sec": 866172.8326623382,
+          "latency": {
+            "count": 10000,
+            "min_ns": 531,
+            "p50_ns": 930,
+            "p99_ns": 3063,
+            "p999_ns": 9763,
+            "max_ns": 13310
+          }
+        }
+      ]
+    },
+    {
+      "engine": "elena",
+      "sync_tier": "group-commit",
+      "mix": "ycsb-c",
+      "value_size": 4096,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 11818596843,
+          "throughput_ops_sec": 846.1241324026438,
+          "latency": {
+            "count": 10000,
+            "min_ns": 11978,
+            "p50_ns": 306652,
+            "p99_ns": 9242606,
+            "p999_ns": 14426799,
+            "max_ns": 82391228
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 33818972,
+          "throughput_ops_sec": 295692.01571236405,
+          "latency": {
+            "count": 10000,
+            "min_ns": 1407,
+            "p50_ns": 2912,
+            "p99_ns": 10829,
+            "p999_ns": 17183,
+            "max_ns": 25223
+          }
+        }
+      ]
+    },
+    {
+      "engine": "elena",
+      "sync_tier": "group-commit",
+      "mix": "ycsb-c",
+      "value_size": 16384,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 13540193462,
+          "throughput_ops_sec": 738.5418848013207,
+          "latency": {
+            "count": 10000,
+            "min_ns": 11014,
+            "p50_ns": 293036,
+            "p99_ns": 9703054,
+            "p999_ns": 16992958,
+            "max_ns": 91268355
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 286791611,
+          "throughput_ops_sec": 34868.523403217674,
+          "latency": {
+            "count": 10000,
+            "min_ns": 5327,
+            "p50_ns": 9055,
+            "p99_ns": 257702,
+            "p999_ns": 487872,
+            "max_ns": 2139251
+          }
+        }
+      ]
+    },
+    {
+      "engine": "bbolt",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-a",
+      "value_size": 64,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 158653063408,
+          "throughput_ops_sec": 63.03061400260207,
+          "latency": {
+            "count": 10000,
+            "min_ns": 12500317,
+            "p50_ns": 15000018,
+            "p99_ns": 30109670,
+            "p999_ns": 53058635,
+            "max_ns": 91214873
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 81937624604,
+          "throughput_ops_sec": 122.0440554425326,
+          "latency": {
+            "count": 10000,
+            "min_ns": 538,
+            "p50_ns": 601067,
+            "p99_ns": 31621190,
+            "p999_ns": 49178758,
+            "max_ns": 108103988
+          }
+        }
+      ]
+    },
+    {
+      "engine": "bbolt",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-a",
+      "value_size": 256,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 157670286852,
+          "throughput_ops_sec": 63.423490878701045,
+          "latency": {
+            "count": 10000,
+            "min_ns": 12703218,
+            "p50_ns": 14595428,
+            "p99_ns": 34982015,
+            "p999_ns": 61205909,
+            "max_ns": 509725460
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 85030156484,
+          "throughput_ops_sec": 117.60533454835738,
+          "latency": {
+            "count": 10000,
+            "min_ns": 600,
+            "p50_ns": 2419801,
+            "p99_ns": 39289227,
+            "p999_ns": 60059793,
+            "max_ns": 2039252197
+          }
+        }
+      ]
+    },
+    {
+      "engine": "bbolt",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-a",
+      "value_size": 1024,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 163737828839,
+          "throughput_ops_sec": 61.073241723711824,
+          "latency": {
+            "count": 10000,
+            "min_ns": 10495310,
+            "p50_ns": 14662949,
+            "p99_ns": 45865601,
+            "p999_ns": 166241063,
+            "max_ns": 656639794
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 81102764368,
+          "throughput_ops_sec": 123.30035946278561,
+          "latency": {
+            "count": 10000,
+            "min_ns": 543,
+            "p50_ns": 2053132,
+            "p99_ns": 28891667,
+            "p999_ns": 46560713,
+            "max_ns": 165122209
+          }
+        }
+      ]
+    },
+    {
+      "engine": "bbolt",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-a",
+      "value_size": 4096,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 165992327482,
+          "throughput_ops_sec": 60.243748320743244,
+          "latency": {
+            "count": 10000,
+            "min_ns": 13178433,
+            "p50_ns": 15120277,
+            "p99_ns": 37652050,
+            "p999_ns": 86132954,
+            "max_ns": 223906288
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 88249017948,
+          "throughput_ops_sec": 113.31570857697722,
+          "latency": {
+            "count": 10000,
+            "min_ns": 510,
+            "p50_ns": 3180703,
+            "p99_ns": 31904008,
+            "p999_ns": 51580907,
+            "max_ns": 295033157
+          }
+        }
+      ]
+    },
+    {
+      "engine": "bbolt",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-a",
+      "value_size": 16384,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 164433231475,
+          "throughput_ops_sec": 60.81495759888641,
+          "latency": {
+            "count": 10000,
+            "min_ns": 13405914,
+            "p50_ns": 15703905,
+            "p99_ns": 29466354,
+            "p999_ns": 71567603,
+            "max_ns": 397632994
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 85684147139,
+          "throughput_ops_sec": 116.70770304543767,
+          "latency": {
+            "count": 10000,
+            "min_ns": 943,
+            "p50_ns": 1719545,
+            "p99_ns": 30500822,
+            "p999_ns": 47011262,
+            "max_ns": 207504219
+          }
+        }
+      ]
+    },
+    {
+      "engine": "bbolt",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-b",
+      "value_size": 64,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 153526765564,
+          "throughput_ops_sec": 65.13522227387345,
+          "latency": {
+            "count": 10000,
+            "min_ns": 12931253,
+            "p50_ns": 14800273,
+            "p99_ns": 26598275,
+            "p999_ns": 45302306,
+            "max_ns": 147089320
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 7691101609,
+          "throughput_ops_sec": 1300.2038600423853,
+          "latency": {
+            "count": 10000,
+            "min_ns": 457,
+            "p50_ns": 1637,
+            "p99_ns": 15658417,
+            "p999_ns": 23726515,
+            "max_ns": 57287034
+          }
+        }
+      ]
+    },
+    {
+      "engine": "bbolt",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-b",
+      "value_size": 256,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 158748224553,
+          "throughput_ops_sec": 62.99283049090971,
+          "latency": {
+            "count": 10000,
+            "min_ns": 12610074,
+            "p50_ns": 14594459,
+            "p99_ns": 44622184,
+            "p999_ns": 60264566,
+            "max_ns": 542137048
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 7661653514,
+          "throughput_ops_sec": 1305.2012834732323,
+          "latency": {
+            "count": 10000,
+            "min_ns": 392,
+            "p50_ns": 1987,
+            "p99_ns": 15247389,
+            "p999_ns": 21846968,
+            "max_ns": 27912274
+          }
+        }
+      ]
+    },
+    {
+      "engine": "bbolt",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-b",
+      "value_size": 1024,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 154520622572,
+          "throughput_ops_sec": 64.7162808015508,
+          "latency": {
+            "count": 10000,
+            "min_ns": 12598989,
+            "p50_ns": 14491104,
+            "p99_ns": 44255609,
+            "p999_ns": 51717234,
+            "max_ns": 129009057
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 8288297466,
+          "throughput_ops_sec": 1206.5204031372782,
+          "latency": {
+            "count": 10000,
+            "min_ns": 426,
+            "p50_ns": 1894,
+            "p99_ns": 16879643,
+            "p999_ns": 24437649,
+            "max_ns": 31588307
+          }
+        }
+      ]
+    },
+    {
+      "engine": "bbolt",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-b",
+      "value_size": 4096,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 159154514594,
+          "throughput_ops_sec": 62.832022236439855,
+          "latency": {
+            "count": 10000,
+            "min_ns": 12771775,
+            "p50_ns": 15045167,
+            "p99_ns": 29678206,
+            "p999_ns": 45631528,
+            "max_ns": 249632698
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 8417000990,
+          "throughput_ops_sec": 1188.0716197943561,
+          "latency": {
+            "count": 10000,
+            "min_ns": 492,
+            "p50_ns": 2448,
+            "p99_ns": 16640535,
+            "p999_ns": 30361927,
+            "max_ns": 53295342
+          }
+        }
+      ]
+    },
+    {
+      "engine": "bbolt",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-b",
+      "value_size": 16384,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 168938752607,
+          "throughput_ops_sec": 59.19304982239847,
+          "latency": {
+            "count": 10000,
+            "min_ns": 12811765,
+            "p50_ns": 16004995,
+            "p99_ns": 31581309,
+            "p999_ns": 56861929,
+            "max_ns": 168825202
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 8856685277,
+          "throughput_ops_sec": 1129.0905894521377,
+          "latency": {
+            "count": 10000,
+            "min_ns": 482,
+            "p50_ns": 2308,
+            "p99_ns": 17117547,
+            "p999_ns": 27585069,
+            "max_ns": 120331695
+          }
+        }
+      ]
+    },
+    {
+      "engine": "bbolt",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-c",
+      "value_size": 64,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 160199215155,
+          "throughput_ops_sec": 62.42227835089297,
+          "latency": {
+            "count": 10000,
+            "min_ns": 13329349,
+            "p50_ns": 15099641,
+            "p99_ns": 29790540,
+            "p999_ns": 38630893,
+            "max_ns": 179896035
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 11127201,
+          "throughput_ops_sec": 898698.603539201,
+          "latency": {
+            "count": 10000,
+            "min_ns": 430,
+            "p50_ns": 767,
+            "p99_ns": 2427,
+            "p999_ns": 9105,
+            "max_ns": 18781
+          }
+        }
+      ]
+    },
+    {
+      "engine": "bbolt",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-c",
+      "value_size": 256,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 158026904186,
+          "throughput_ops_sec": 63.28036388177201,
+          "latency": {
+            "count": 10000,
+            "min_ns": 12707234,
+            "p50_ns": 14804195,
+            "p99_ns": 43570611,
+            "p999_ns": 51426462,
+            "max_ns": 202933021
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 132655563,
+          "throughput_ops_sec": 75383.19369237458,
+          "latency": {
+            "count": 10000,
+            "min_ns": 438,
+            "p50_ns": 1160,
+            "p99_ns": 247559,
+            "p999_ns": 350336,
+            "max_ns": 477081
+          }
+        }
+      ]
+    },
+    {
+      "engine": "bbolt",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-c",
+      "value_size": 1024,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 159478547666,
+          "throughput_ops_sec": 62.70435833754428,
+          "latency": {
+            "count": 10000,
+            "min_ns": 12899041,
+            "p50_ns": 14814629,
+            "p99_ns": 43217697,
+            "p999_ns": 59668006,
+            "max_ns": 368695271
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 10418228,
+          "throughput_ops_sec": 959856.1290845238,
+          "latency": {
+            "count": 10000,
+            "min_ns": 404,
+            "p50_ns": 662,
+            "p99_ns": 6249,
+            "p999_ns": 11652,
+            "max_ns": 16823
+          }
+        }
+      ]
+    },
+    {
+      "engine": "bbolt",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-c",
+      "value_size": 4096,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 158716120471,
+          "throughput_ops_sec": 63.00557227787811,
+          "latency": {
+            "count": 10000,
+            "min_ns": 13016990,
+            "p50_ns": 15215078,
+            "p99_ns": 29498580,
+            "p999_ns": 47507025,
+            "max_ns": 115931390
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 8901317,
+          "throughput_ops_sec": 1123429.2633326056,
+          "latency": {
+            "count": 10000,
+            "min_ns": 310,
+            "p50_ns": 524,
+            "p99_ns": 5206,
+            "p999_ns": 10037,
+            "max_ns": 16930
+          }
+        }
+      ]
+    },
+    {
+      "engine": "bbolt",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-c",
+      "value_size": 16384,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 162173709009,
+          "throughput_ops_sec": 61.662275970052825,
+          "latency": {
+            "count": 10000,
+            "min_ns": 12705477,
+            "p50_ns": 15791687,
+            "p99_ns": 27970065,
+            "p999_ns": 40226004,
+            "max_ns": 229393879
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 14612285,
+          "throughput_ops_sec": 684355.6637445821,
+          "latency": {
+            "count": 10000,
+            "min_ns": 402,
+            "p50_ns": 646,
+            "p99_ns": 10867,
+            "p999_ns": 16237,
+            "max_ns": 34871
+          }
+        }
+      ]
+    },
+    {
+      "engine": "badger",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-a",
+      "value_size": 64,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 78663970860,
+          "throughput_ops_sec": 127.12300041142366,
+          "latency": {
+            "count": 10000,
+            "min_ns": 6405223,
+            "p50_ns": 7517854,
+            "p99_ns": 14640955,
+            "p999_ns": 18718606,
+            "max_ns": 139332032
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 38303521518,
+          "throughput_ops_sec": 261.0726012567981,
+          "latency": {
+            "count": 10000,
+            "min_ns": 708,
+            "p50_ns": 50373,
+            "p99_ns": 9398520,
+            "p999_ns": 16286989,
+            "max_ns": 77123830
+          }
+        }
+      ]
+    },
+    {
+      "engine": "badger",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-a",
+      "value_size": 256,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 81715608073,
+          "throughput_ops_sec": 122.37564200790843,
+          "latency": {
+            "count": 10000,
+            "min_ns": 6472337,
+            "p50_ns": 7494372,
+            "p99_ns": 36771755,
+            "p999_ns": 40610764,
+            "max_ns": 246107035
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 39889830719,
+          "throughput_ops_sec": 250.6904596924469,
+          "latency": {
+            "count": 10000,
+            "min_ns": 580,
+            "p50_ns": 62288,
+            "p99_ns": 14862114,
+            "p999_ns": 37984215,
+            "max_ns": 105141876
+          }
+        }
+      ]
+    },
+    {
+      "engine": "badger",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-a",
+      "value_size": 1024,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 80973313315,
+          "throughput_ops_sec": 123.49747825062184,
+          "latency": {
+            "count": 10000,
+            "min_ns": 5990819,
+            "p50_ns": 7211133,
+            "p99_ns": 36152860,
+            "p999_ns": 43850577,
+            "max_ns": 268742761
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 39603052420,
+          "throughput_ops_sec": 252.5057890474595,
+          "latency": {
+            "count": 10000,
+            "min_ns": 811,
+            "p50_ns": 86376,
+            "p99_ns": 14827818,
+            "p999_ns": 37990855,
+            "max_ns": 45304336
+          }
+        }
+      ]
+    },
+    {
+      "engine": "badger",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-a",
+      "value_size": 4096,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 79426877161,
+          "throughput_ops_sec": 125.90196615346949,
+          "latency": {
+            "count": 10000,
+            "min_ns": 6122664,
+            "p50_ns": 7436525,
+            "p99_ns": 15506346,
+            "p999_ns": 32793641,
+            "max_ns": 222642780
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 40370535639,
+          "throughput_ops_sec": 247.70540795944973,
+          "latency": {
+            "count": 10000,
+            "min_ns": 1440,
+            "p50_ns": 61663,
+            "p99_ns": 14893771,
+            "p999_ns": 37497317,
+            "max_ns": 217257129
+          }
+        }
+      ]
+    },
+    {
+      "engine": "badger",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-a",
+      "value_size": 16384,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 80924129455,
+          "throughput_ops_sec": 123.57253723144176,
+          "latency": {
+            "count": 10000,
+            "min_ns": 6465363,
+            "p50_ns": 7502253,
+            "p99_ns": 15718999,
+            "p999_ns": 37981318,
+            "max_ns": 153315484
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 41297199639,
+          "throughput_ops_sec": 242.14716947916878,
+          "latency": {
+            "count": 10000,
+            "min_ns": 5433,
+            "p50_ns": 6515903,
+            "p99_ns": 15062013,
+            "p999_ns": 37920678,
+            "max_ns": 230393241
+          }
+        }
+      ]
+    },
+    {
+      "engine": "badger",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-b",
+      "value_size": 64,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 81392248850,
+          "throughput_ops_sec": 122.8618221180898,
+          "latency": {
+            "count": 10000,
+            "min_ns": 6401689,
+            "p50_ns": 7512350,
+            "p99_ns": 15921884,
+            "p999_ns": 38214269,
+            "max_ns": 115265435
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 4031143468,
+          "throughput_ops_sec": 2480.685710985467,
+          "latency": {
+            "count": 10000,
+            "min_ns": 389,
+            "p50_ns": 2044,
+            "p99_ns": 7788321,
+            "p999_ns": 14379668,
+            "max_ns": 15510241
+          }
+        }
+      ]
+    },
+    {
+      "engine": "badger",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-b",
+      "value_size": 256,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 81428159874,
+          "throughput_ops_sec": 122.80763823563939,
+          "latency": {
+            "count": 10000,
+            "min_ns": 6185549,
+            "p50_ns": 7452606,
+            "p99_ns": 18905745,
+            "p999_ns": 38464826,
+            "max_ns": 175410328
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 4033450187,
+          "throughput_ops_sec": 2479.2670136922657,
+          "latency": {
+            "count": 10000,
+            "min_ns": 467,
+            "p50_ns": 2500,
+            "p99_ns": 7765306,
+            "p999_ns": 14391479,
+            "max_ns": 37765962
+          }
+        }
+      ]
+    },
+    {
+      "engine": "badger",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-b",
+      "value_size": 1024,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 79922667140,
+          "throughput_ops_sec": 125.12094951089492,
+          "latency": {
+            "count": 10000,
+            "min_ns": 6399333,
+            "p50_ns": 7249652,
+            "p99_ns": 27578485,
+            "p999_ns": 43959443,
+            "max_ns": 62809777
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 3921182457,
+          "throughput_ops_sec": 2550.2511320655944,
+          "latency": {
+            "count": 10000,
+            "min_ns": 354,
+            "p50_ns": 2921,
+            "p99_ns": 7699760,
+            "p999_ns": 13979246,
+            "max_ns": 22537806
+          }
+        }
+      ]
+    },
+    {
+      "engine": "badger",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-b",
+      "value_size": 4096,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 77988277533,
+          "throughput_ops_sec": 128.22439879850654,
+          "latency": {
+            "count": 10000,
+            "min_ns": 6495452,
+            "p50_ns": 7365610,
+            "p99_ns": 15019723,
+            "p999_ns": 36838632,
+            "max_ns": 178208639
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 4617254853,
+          "throughput_ops_sec": 2165.789049634683,
+          "latency": {
+            "count": 10000,
+            "min_ns": 1192,
+            "p50_ns": 5066,
+            "p99_ns": 8073812,
+            "p999_ns": 37652374,
+            "max_ns": 45353006
+          }
+        }
+      ]
+    },
+    {
+      "engine": "badger",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-b",
+      "value_size": 16384,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 79318060479,
+          "throughput_ops_sec": 126.07469143358048,
+          "latency": {
+            "count": 10000,
+            "min_ns": 6402120,
+            "p50_ns": 7393841,
+            "p99_ns": 15249213,
+            "p999_ns": 38460034,
+            "max_ns": 717901670
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 3986084176,
+          "throughput_ops_sec": 2508.727753470302,
+          "latency": {
+            "count": 10000,
+            "min_ns": 4427,
+            "p50_ns": 22488,
+            "p99_ns": 7574352,
+            "p999_ns": 8947385,
+            "max_ns": 19957877
+          }
+        }
+      ]
+    },
+    {
+      "engine": "badger",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-c",
+      "value_size": 64,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 79231420628,
+          "throughput_ops_sec": 126.21255457416409,
+          "latency": {
+            "count": 10000,
+            "min_ns": 6388597,
+            "p50_ns": 7435616,
+            "p99_ns": 15580428,
+            "p999_ns": 38093894,
+            "max_ns": 116460183
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 19072007,
+          "throughput_ops_sec": 524328.6666159467,
+          "latency": {
+            "count": 10000,
+            "min_ns": 391,
+            "p50_ns": 1403,
+            "p99_ns": 9313,
+            "p999_ns": 23715,
+            "max_ns": 48847
+          }
+        }
+      ]
+    },
+    {
+      "engine": "badger",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-c",
+      "value_size": 256,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 83607554741,
+          "throughput_ops_sec": 119.60641632180324,
+          "latency": {
+            "count": 10000,
+            "min_ns": 6484742,
+            "p50_ns": 7510394,
+            "p99_ns": 36954257,
+            "p999_ns": 44752380,
+            "max_ns": 246451590
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 21964395,
+          "throughput_ops_sec": 455282.28753853677,
+          "latency": {
+            "count": 10000,
+            "min_ns": 456,
+            "p50_ns": 1763,
+            "p99_ns": 7400,
+            "p999_ns": 15373,
+            "max_ns": 31445
+          }
+        }
+      ]
+    },
+    {
+      "engine": "badger",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-c",
+      "value_size": 1024,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 81244764235,
+          "throughput_ops_sec": 123.0848546876825,
+          "latency": {
+            "count": 10000,
+            "min_ns": 6303169,
+            "p50_ns": 7247144,
+            "p99_ns": 37197196,
+            "p999_ns": 44881064,
+            "max_ns": 137997559
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 15665182,
+          "throughput_ops_sec": 638358.3669822668,
+          "latency": {
+            "count": 10000,
+            "min_ns": 483,
+            "p50_ns": 1285,
+            "p99_ns": 7128,
+            "p999_ns": 12012,
+            "max_ns": 40697
+          }
+        }
+      ]
+    },
+    {
+      "engine": "badger",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-c",
+      "value_size": 4096,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 77695095252,
+          "throughput_ops_sec": 128.7082533017756,
+          "latency": {
+            "count": 10000,
+            "min_ns": 6296256,
+            "p50_ns": 7298103,
+            "p99_ns": 15104138,
+            "p999_ns": 37330557,
+            "max_ns": 206264987
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 36260285,
+          "throughput_ops_sec": 275783.8224382406,
+          "latency": {
+            "count": 10000,
+            "min_ns": 1118,
+            "p50_ns": 3041,
+            "p99_ns": 13308,
+            "p999_ns": 25023,
+            "max_ns": 269340
+          }
+        }
+      ]
+    },
+    {
+      "engine": "badger",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-c",
+      "value_size": 16384,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 78889086004,
+          "throughput_ops_sec": 126.76024665177333,
+          "latency": {
+            "count": 10000,
+            "min_ns": 6219923,
+            "p50_ns": 7398516,
+            "p99_ns": 15207480,
+            "p999_ns": 36906332,
+            "max_ns": 409321800
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 200766517,
+          "throughput_ops_sec": 49809.102381349774,
+          "latency": {
+            "count": 10000,
+            "min_ns": 4778,
+            "p50_ns": 19875,
+            "p99_ns": 54198,
+            "p999_ns": 153944,
+            "max_ns": 274865
+          }
+        }
+      ]
+    },
+    {
+      "engine": "rosedb",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-a",
+      "value_size": 64,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 78224321453,
+          "throughput_ops_sec": 127.83747834755411,
+          "latency": {
+            "count": 10000,
+            "min_ns": 6285958,
+            "p50_ns": 7222256,
+            "p99_ns": 16447905,
+            "p999_ns": 37990792,
+            "max_ns": 110728485
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 39663889816,
+          "throughput_ops_sec": 252.11848979991126,
+          "latency": {
+            "count": 10000,
+            "min_ns": 1090,
+            "p50_ns": 74907,
+            "p99_ns": 14347582,
+            "p999_ns": 37740668,
+            "max_ns": 52049205
+          }
+        }
+      ]
+    },
+    {
+      "engine": "rosedb",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-a",
+      "value_size": 256,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 80797455122,
+          "throughput_ops_sec": 123.76627438203981,
+          "latency": {
+            "count": 10000,
+            "min_ns": 6392261,
+            "p50_ns": 7319210,
+            "p99_ns": 17296205,
+            "p999_ns": 38053407,
+            "max_ns": 239361257
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 38911619623,
+          "throughput_ops_sec": 256.99264376261453,
+          "latency": {
+            "count": 10000,
+            "min_ns": 1209,
+            "p50_ns": 87765,
+            "p99_ns": 14241994,
+            "p999_ns": 37826170,
+            "max_ns": 45082021
+          }
+        }
+      ]
+    },
+    {
+      "engine": "rosedb",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-a",
+      "value_size": 1024,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 77301930433,
+          "throughput_ops_sec": 129.36287546748025,
+          "latency": {
+            "count": 10000,
+            "min_ns": 6096328,
+            "p50_ns": 7217026,
+            "p99_ns": 14914018,
+            "p999_ns": 29999174,
+            "max_ns": 106288114
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 40435150926,
+          "throughput_ops_sec": 247.309575233215,
+          "latency": {
+            "count": 10000,
+            "min_ns": 1371,
+            "p50_ns": 109480,
+            "p99_ns": 14985294,
+            "p999_ns": 36178469,
+            "max_ns": 137991824
+          }
+        }
+      ]
+    },
+    {
+      "engine": "rosedb",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-a",
+      "value_size": 4096,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 78498133177,
+          "throughput_ops_sec": 127.39156455417472,
+          "latency": {
+            "count": 10000,
+            "min_ns": 6483286,
+            "p50_ns": 7393412,
+            "p99_ns": 15197078,
+            "p999_ns": 23010314,
+            "max_ns": 101696881
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 38935213420,
+          "throughput_ops_sec": 256.8369124403788,
+          "latency": {
+            "count": 10000,
+            "min_ns": 3577,
+            "p50_ns": 93761,
+            "p99_ns": 10058028,
+            "p999_ns": 21110692,
+            "max_ns": 104702003
+          }
+        }
+      ]
+    },
+    {
+      "engine": "rosedb",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-a",
+      "value_size": 16384,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 78549308510,
+          "throughput_ops_sec": 127.30856820626134,
+          "latency": {
+            "count": 10000,
+            "min_ns": 6390830,
+            "p50_ns": 7398302,
+            "p99_ns": 15129776,
+            "p999_ns": 38322273,
+            "max_ns": 45072508
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 39502847166,
+          "throughput_ops_sec": 253.146310137538,
+          "latency": {
+            "count": 10000,
+            "min_ns": 6075,
+            "p50_ns": 138869,
+            "p99_ns": 13970988,
+            "p999_ns": 36706153,
+            "max_ns": 103528138
+          }
+        }
+      ]
+    },
+    {
+      "engine": "rosedb",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-b",
+      "value_size": 64,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 76615442673,
+          "throughput_ops_sec": 130.52198944644476,
+          "latency": {
+            "count": 10000,
+            "min_ns": 6295768,
+            "p50_ns": 7304308,
+            "p99_ns": 14634537,
+            "p999_ns": 18315134,
+            "max_ns": 85278789
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 3847311677,
+          "throughput_ops_sec": 2599.2175418960733,
+          "latency": {
+            "count": 10000,
+            "min_ns": 890,
+            "p50_ns": 5802,
+            "p99_ns": 7684281,
+            "p999_ns": 9092712,
+            "max_ns": 18151207
+          }
+        }
+      ]
+    },
+    {
+      "engine": "rosedb",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-b",
+      "value_size": 256,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 76349101839,
+          "throughput_ops_sec": 130.97731026472778,
+          "latency": {
+            "count": 10000,
+            "min_ns": 6478620,
+            "p50_ns": 7301542,
+            "p99_ns": 14560595,
+            "p999_ns": 18608597,
+            "max_ns": 126510971
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 4069402436,
+          "throughput_ops_sec": 2457.363251059891,
+          "latency": {
+            "count": 10000,
+            "min_ns": 792,
+            "p50_ns": 5862,
+            "p99_ns": 8037224,
+            "p999_ns": 14459595,
+            "max_ns": 15362220
+          }
+        }
+      ]
+    },
+    {
+      "engine": "rosedb",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-b",
+      "value_size": 1024,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 81606150613,
+          "throughput_ops_sec": 122.53978315216578,
+          "latency": {
+            "count": 10000,
+            "min_ns": 6524303,
+            "p50_ns": 7394665,
+            "p99_ns": 34966578,
+            "p999_ns": 38989010,
+            "max_ns": 112348941
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 3701620569,
+          "throughput_ops_sec": 2701.5194598136563,
+          "latency": {
+            "count": 10000,
+            "min_ns": 1241,
+            "p50_ns": 7832,
+            "p99_ns": 7404230,
+            "p999_ns": 8611671,
+            "max_ns": 16300951
+          }
+        }
+      ]
+    },
+    {
+      "engine": "rosedb",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-b",
+      "value_size": 4096,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 77489666929,
+          "throughput_ops_sec": 129.04946422292036,
+          "latency": {
+            "count": 10000,
+            "min_ns": 6397932,
+            "p50_ns": 7281343,
+            "p99_ns": 15285410,
+            "p999_ns": 37769638,
+            "max_ns": 208857658
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 3846330252,
+          "throughput_ops_sec": 2599.8807551172285,
+          "latency": {
+            "count": 10000,
+            "min_ns": 2515,
+            "p50_ns": 9894,
+            "p99_ns": 8107848,
+            "p999_ns": 8864534,
+            "max_ns": 16799875
+          }
+        }
+      ]
+    },
+    {
+      "engine": "rosedb",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-b",
+      "value_size": 16384,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 78465406517,
+          "throughput_ops_sec": 127.44469752837436,
+          "latency": {
+            "count": 10000,
+            "min_ns": 6405686,
+            "p50_ns": 7439191,
+            "p99_ns": 14973009,
+            "p999_ns": 19624765,
+            "max_ns": 82414636
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 4424046485,
+          "throughput_ops_sec": 2260.374079229414,
+          "latency": {
+            "count": 10000,
+            "min_ns": 10076,
+            "p50_ns": 35990,
+            "p99_ns": 8577006,
+            "p999_ns": 14303006,
+            "max_ns": 19924224
+          }
+        }
+      ]
+    },
+    {
+      "engine": "rosedb",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-c",
+      "value_size": 64,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 77945222758,
+          "throughput_ops_sec": 128.29522639312285,
+          "latency": {
+            "count": 10000,
+            "min_ns": 6406106,
+            "p50_ns": 7318001,
+            "p99_ns": 14979046,
+            "p999_ns": 19211644,
+            "max_ns": 84437602
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 21894790,
+          "throughput_ops_sec": 456729.66034385347,
+          "latency": {
+            "count": 10000,
+            "min_ns": 1380,
+            "p50_ns": 1665,
+            "p99_ns": 7048,
+            "p999_ns": 18453,
+            "max_ns": 45066
+          }
+        }
+      ]
+    },
+    {
+      "engine": "rosedb",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-c",
+      "value_size": 256,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 78850225608,
+          "throughput_ops_sec": 126.82271893189635,
+          "latency": {
+            "count": 10000,
+            "min_ns": 6292226,
+            "p50_ns": 7335252,
+            "p99_ns": 15670786,
+            "p999_ns": 38021827,
+            "max_ns": 54010777
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 15353950,
+          "throughput_ops_sec": 651298.2001374239,
+          "latency": {
+            "count": 10000,
+            "min_ns": 863,
+            "p50_ns": 1128,
+            "p99_ns": 8140,
+            "p999_ns": 16073,
+            "max_ns": 40540
+          }
+        }
+      ]
+    },
+    {
+      "engine": "rosedb",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-c",
+      "value_size": 1024,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 80137058930,
+          "throughput_ops_sec": 124.78621169183455,
+          "latency": {
+            "count": 10000,
+            "min_ns": 6402548,
+            "p50_ns": 7215610,
+            "p99_ns": 33555471,
+            "p999_ns": 39094829,
+            "max_ns": 183390170
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 34018948,
+          "throughput_ops_sec": 293953.8283194413,
+          "latency": {
+            "count": 10000,
+            "min_ns": 1495,
+            "p50_ns": 2121,
+            "p99_ns": 16275,
+            "p999_ns": 24816,
+            "max_ns": 58544
+          }
+        }
+      ]
+    },
+    {
+      "engine": "rosedb",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-c",
+      "value_size": 4096,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 77253582661,
+          "throughput_ops_sec": 129.44383490771503,
+          "latency": {
+            "count": 10000,
+            "min_ns": 6293981,
+            "p50_ns": 7139976,
+            "p99_ns": 15992915,
+            "p999_ns": 37776239,
+            "max_ns": 120974469
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 53938319,
+          "throughput_ops_sec": 185396.95313826893,
+          "latency": {
+            "count": 10000,
+            "min_ns": 2060,
+            "p50_ns": 4295,
+            "p99_ns": 15318,
+            "p999_ns": 25160,
+            "max_ns": 252539
+          }
+        }
+      ]
+    },
+    {
+      "engine": "rosedb",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-c",
+      "value_size": 16384,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 78923882120,
+          "throughput_ops_sec": 126.70436034552225,
+          "latency": {
+            "count": 10000,
+            "min_ns": 6312199,
+            "p50_ns": 7315988,
+            "p99_ns": 15483919,
+            "p999_ns": 28671886,
+            "max_ns": 57644317
+          }
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 119350684,
+          "throughput_ops_sec": 83786.70037617882,
+          "latency": {
+            "count": 10000,
+            "min_ns": 3504,
+            "p50_ns": 9930,
+            "p99_ns": 32166,
+            "p999_ns": 62095,
+            "max_ns": 136144
+          }
+        }
+      ]
+    }
+  ],
+  "failures": []
+}

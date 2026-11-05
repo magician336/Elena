@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"elena/internal/engine"
+	"github.com/magician336/elena/internal/engine"
 )
 
 // openEngine is a helper that opens dir and fails the test on error.
@@ -62,7 +62,7 @@ func TestCleanReopenPreservesAllData(t *testing.T) {
 // survive: overwrites resolve to the newest entry and tombstones keep
 // their keys hidden. A key written after another was deleted stays
 // readable.
-func TestCleanReopenReplaysOverwritesAndTombstones(t *testing.T) {
+func TestCleanReopenResolvesOverwritesAndTombstones(t *testing.T) {
 	dir := t.TempDir()
 
 	eng := openEngine(t, dir)

@@ -1,12 +1,13 @@
 # Private workspace: keep out of the public repository history.
+# docs/ is private by default; the benchmark reports are the public
+# evidence and the accepted decision records are public architecture,
+# so those two trees are let back in.
 .scratch/
 AGENTS.md
 .worktrees/
-docs/research/
-docs/learning/
-docs/plan/
-docs/agents/
-docs/adr/
+docs/*
+!docs/benchmarks/
+!docs/adr/
 
 # Go build and test artifacts.
 *.test

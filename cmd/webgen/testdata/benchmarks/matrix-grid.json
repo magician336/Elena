@@ -1,0 +1,131 @@
+{
+  "results": [
+    {
+      "engine": "elena",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-a",
+      "value_size": 1024,
+      "phases": [
+        {
+          "phase": "load",
+          "ops": 10000,
+          "elapsed_ns": 90000000000,
+          "throughput_ops_sec": 111.0,
+          "latency": {"count": 10000, "min_ns": 1, "p50_ns": 2, "p99_ns": 3, "p999_ns": 4, "max_ns": 5}
+        },
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 33277870183,
+          "throughput_ops_sec": 300.4999,
+          "latency": {"count": 10000, "min_ns": 1, "p50_ns": 2, "p99_ns": 12500000, "p999_ns": 4, "max_ns": 5}
+        }
+      ]
+    },
+    {
+      "engine": "bbolt",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-a",
+      "value_size": 1024,
+      "phases": [
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 81099999999,
+          "throughput_ops_sec": 123.2999,
+          "latency": {"count": 10000, "min_ns": 1, "p50_ns": 2, "p99_ns": 28891667, "p999_ns": 4, "max_ns": 5}
+        }
+      ]
+    },
+    {
+      "engine": "badger",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-a",
+      "value_size": 1024,
+      "phases": [
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 39603200000,
+          "throughput_ops_sec": 150.4999,
+          "latency": {"count": 10000, "min_ns": 1, "p50_ns": 2, "p99_ns": 15000000, "p999_ns": 4, "max_ns": 5}
+        }
+      ]
+    },
+    {
+      "engine": "rosedb",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-a",
+      "value_size": 1024,
+      "phases": [
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 40436000000,
+          "throughput_ops_sec": 140.4499,
+          "latency": {"count": 10000, "min_ns": 1, "p50_ns": 2, "p99_ns": 14900000, "p999_ns": 4, "max_ns": 5}
+        }
+      ]
+    },
+    {
+      "engine": "elena",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-c",
+      "value_size": 16384,
+      "phases": [
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 98700987,
+          "throughput_ops_sec": 101313.2,
+          "latency": {"count": 10000, "min_ns": 1, "p50_ns": 2, "p99_ns": 3, "p999_ns": 4, "max_ns": 5}
+        }
+      ]
+    },
+    {
+      "engine": "bbolt",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-c",
+      "value_size": 16384,
+      "phases": [
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 14613788,
+          "throughput_ops_sec": 684356.1,
+          "latency": {"count": 10000, "min_ns": 1, "p50_ns": 2, "p99_ns": 3, "p999_ns": 4, "max_ns": 5}
+        }
+      ]
+    },
+    {
+      "engine": "elena",
+      "sync_tier": "per-write-sync",
+      "mix": "ycsb-a",
+      "value_size": 64,
+      "phases": [
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 21138122404,
+          "throughput_ops_sec": 473.0789,
+          "latency": {"count": 10000, "min_ns": 1, "p50_ns": 2, "p99_ns": 3, "p999_ns": 4, "max_ns": 5}
+        }
+      ]
+    },
+    {
+      "engine": "elena",
+      "sync_tier": "group-commit",
+      "mix": "ycsb-a",
+      "value_size": 64,
+      "phases": [
+        {
+          "phase": "run",
+          "ops": 10000,
+          "elapsed_ns": 88790000,
+          "throughput_ops_sec": 112618.87,
+          "latency": {"count": 10000, "min_ns": 1, "p50_ns": 2, "p99_ns": 3, "p999_ns": 4, "max_ns": 5}
+        }
+      ]
+    }
+  ]
+}

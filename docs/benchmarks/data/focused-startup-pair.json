@@ -1,0 +1,19 @@
+{
+  "scenario": "startup-pair",
+  "result": {
+    "hint": {
+      "mode": "hint",
+      "open_ns": 295569525,
+      "first_read_ns": 3664113,
+      "live_entries": 69632,
+      "data_bytes": 273667658
+    },
+    "no_hint": {
+      "mode": "no-hint",
+      "open_ns": 469745367,
+      "first_read_ns": 6003854,
+      "live_entries": 69632,
+      "data_bytes": 273667658
+    }
+  }
+}

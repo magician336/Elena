@@ -4,7 +4,7 @@ import (
 	"io"
 	"time"
 
-	"elena"
+	"github.com/magician336/elena"
 )
 
 // runCheckpoint manages baselines: with a bare directory it creates

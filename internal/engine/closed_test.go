@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"elena/internal/engine"
+	"github.com/magician336/elena/internal/engine"
 )
 
 // Operations on a closed engine must fail with ErrClosed instead of

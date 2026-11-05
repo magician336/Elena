@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"elena"
+	"github.com/magician336/elena"
 )
 
 // seedDir builds a store through the public library API and returns its

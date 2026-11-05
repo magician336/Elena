@@ -6,7 +6,7 @@ import (
 	"io"
 	"time"
 
-	"elena"
+	"github.com/magician336/elena"
 )
 
 // previewWidth bounds an event's payload preview: quoted bytes up to

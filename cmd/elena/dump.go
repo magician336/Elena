@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"io"
 
-	"elena"
+	"github.com/magician336/elena"
 )
 
 // runDump exports the store as human-readable text: the whole store,

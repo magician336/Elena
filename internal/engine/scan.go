@@ -82,13 +82,15 @@ func (e *Engine) Scan(opts ScanOptions, visit func(key, value []byte) error) err
 }
 
 // snapshotItems copies the matching index entries — key, location, and
-// data file handle — under the read lock, then returns them sorted by
-// key. The lock is held only for the copy: appends never rewrite the
-// bytes an existing entry occupies, and every file handle stays open
-// for at least as long as a snapshot holds a reference (a merge that
-// retires a handle waits for the last such reader), so the captured
-// items stay readable after the lock is released even while writers
-// and merges keep running.
+// data file handle — then returns them sorted by key. The engine's read
+// lock is held for the whole copy (with the shard read locks nested
+// inside it, the whole-index instant is the same one-mutex snapshot the
+// single-map index once gave), and only for the copy: appends never
+// rewrite the bytes an existing entry occupies, and every file handle
+// stays open for at least as long as a snapshot holds a reference (a
+// merge that retires a handle waits for the last such reader), so the
+// captured items stay readable after the locks are released even while
+// writers and merges keep running.
 func (e *Engine) snapshotItems(opts ScanOptions) ([]scanItem, error) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -98,14 +100,19 @@ func (e *Engine) snapshotItems(opts ScanOptions) ([]scanItem, error) {
 	}
 	prefix := string(opts.Prefix)
 	end := string(opts.End)
-	items := make([]scanItem, 0, len(e.index))
-	for key, ref := range e.index {
+	items := make([]scanItem, 0, e.index.count())
+	var corruptKey string
+	var corruptRef entryRef
+	e.index.eachInstant(func(key string, ref entryRef) {
+		if corruptKey != "" {
+			return // already failing: stop pinning more handles
+		}
 		if !strings.HasPrefix(key, prefix) {
-			continue
+			return
 		}
 		if end != "" {
 			if cmp := strings.Compare(key, end); cmp > 0 || (cmp == 0 && !opts.EndInclusive) {
-				continue
+				return
 			}
 		}
 		f, ok := e.files[ref.fileID]
@@ -113,10 +120,14 @@ func (e *Engine) snapshotItems(opts ScanOptions) ([]scanItem, error) {
 			for _, it := range items { // release what this snapshot already pinned
 				it.f.release()
 			}
-			return nil, fmt.Errorf("engine: data file %d for key %q: %w", ref.fileID, key, ErrCorrupted)
+			corruptKey, corruptRef = key, ref
+			return
 		}
 		f.acquire()
 		items = append(items, scanItem{key: key, ref: ref, f: f})
+	})
+	if corruptKey != "" {
+		return nil, fmt.Errorf("engine: data file %d for key %q: %w", corruptRef.fileID, corruptKey, ErrCorrupted)
 	}
 	slices.SortFunc(items, func(a, b scanItem) int { return strings.Compare(a.key, b.key) })
 	return items, nil

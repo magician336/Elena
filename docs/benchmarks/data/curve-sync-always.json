@@ -1,0 +1,62 @@
+{
+  "scenario": "curve",
+  "driver": "elena",
+  "workload": "elena-concurrency-curve",
+  "sync_tier": "sync-always",
+  "points": [
+    {
+      "concurrency": 1,
+      "ops": 64,
+      "elapsed_ns": 283588447,
+      "throughput_ops_sec": 225.67915116795993,
+      "p50_ns": 4096025,
+      "p99_ns": 8425867,
+      "p999_ns": 8425867
+    },
+    {
+      "concurrency": 2,
+      "ops": 128,
+      "elapsed_ns": 558575575,
+      "throughput_ops_sec": 229.15430915503242,
+      "p50_ns": 7966643,
+      "p99_ns": 19943956,
+      "p999_ns": 20122655
+    },
+    {
+      "concurrency": 4,
+      "ops": 256,
+      "elapsed_ns": 1129675511,
+      "throughput_ops_sec": 226.61374660887023,
+      "p50_ns": 17313978,
+      "p99_ns": 26277450,
+      "p999_ns": 29448413
+    },
+    {
+      "concurrency": 8,
+      "ops": 512,
+      "elapsed_ns": 2274064069,
+      "throughput_ops_sec": 225.14757036953122,
+      "p50_ns": 34298190,
+      "p99_ns": 60297956,
+      "p999_ns": 64185903
+    },
+    {
+      "concurrency": 16,
+      "ops": 1024,
+      "elapsed_ns": 4457739526,
+      "throughput_ops_sec": 229.7128385423747,
+      "p50_ns": 68306677,
+      "p99_ns": 95533553,
+      "p999_ns": 98599953
+    },
+    {
+      "concurrency": 32,
+      "ops": 2048,
+      "elapsed_ns": 8775257285,
+      "throughput_ops_sec": 233.38347053376452,
+      "p50_ns": 136004157,
+      "p99_ns": 157261628,
+      "p999_ns": 161316738
+    }
+  ]
+}

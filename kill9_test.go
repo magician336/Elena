@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"testing"
 
-	"elena"
+	"github.com/magician336/elena"
 )
 
 // The kill -9 scenarios lift the engine's headline claim — "an

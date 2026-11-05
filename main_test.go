@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"testing"
 
-	"elena"
+	"github.com/magician336/elena"
 )
 
 // TestMain is the reexec entry of the semantic layer's

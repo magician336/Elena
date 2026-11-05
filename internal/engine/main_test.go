@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"elena/internal/engine"
+	"github.com/magician336/elena/internal/engine"
 )
 
 // TestMain is the reexec entry of the fault-injection harness: when

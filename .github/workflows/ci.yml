@@ -1,8 +1,11 @@
 name: CI
 
 on:
+  # Development lands on main through pull requests, so push runs only
+  # need main (engine-core and semantic-layer were the integration
+  # branches of the first two specs and no longer exist).
   push:
-    branches: [main, engine-core, semantic-layer]
+    branches: [main]
   pull_request:
 
 permissions:
@@ -40,3 +43,46 @@ jobs:
           total="$(go tool cover -func=coverage.out | awk '/^total:/ { gsub(/%/, "", $3); print $3 }')"
           echo "Total coverage: ${total}%"
           awk -v c="$total" 'BEGIN { if (c < 80) { printf "coverage %.1f%% is below the 80%% gate\n", c; exit 1 } }'
+
+  terms:
+    name: Terminology consistency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+      - name: Check wording of tracked files
+        run: make terms
+
+  bench:
+    name: Bench module (race tests + micro smoke)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: bench
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+          cache-dependency-path: bench/go.sum
+      - name: Lint bench module
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: latest
+          working-directory: bench
+      - name: Run bench module tests (race, coverage gate >= 80%)
+        run: |
+          go test -race -covermode=atomic -coverprofile=coverage.out ./...
+          go tool cover -func=coverage.out
+          total="$(go tool cover -func=coverage.out | awk '/^total:/ { gsub(/%/, "", $3); print $3 }')"
+          echo "Bench coverage: ${total}%"
+          awk -v c="$total" 'BEGIN { if (c < 80) { printf "bench coverage %.1f%% is below the 80%% gate\n", c; exit 1 } }'
+      - name: Micro smoke (each driver end to end)
+        run: |
+          go run ./cmd/bench --driver elena --ops 50 --value-size 256 --dir "${RUNNER_TEMP}/bench-smoke-elena"
+          go run ./cmd/bench --driver bbolt --ops 50 --value-size 256 --dir "${RUNNER_TEMP}/bench-smoke-bbolt"
+          go run ./cmd/bench --driver badger --ops 50 --value-size 256 --dir "${RUNNER_TEMP}/bench-smoke-badger"
+          go run ./cmd/bench --driver rosedb --ops 50 --value-size 256 --dir "${RUNNER_TEMP}/bench-smoke-rosedb"
+          go run ./cmd/matrix --engines elena,bbolt,badger,rosedb --mixes a --values 64 --keys 8 --run-ops 8 --sync-period 5ms --root "${RUNNER_TEMP}/matrix-smoke"
