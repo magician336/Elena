@@ -276,7 +276,9 @@ func TestRenderMatrixJSONGolden(t *testing.T) {
 // map iteration, no environment leaks into the report.
 func TestRenderMatrixDeterministic(t *testing.T) {
 	res := goldenMatrix()
-	if RenderMatrixMarkdown(res) != RenderMatrixMarkdown(res) {
+	mdFirst := RenderMatrixMarkdown(res)
+	mdSecond := RenderMatrixMarkdown(res)
+	if mdFirst != mdSecond {
 		t.Fatal("two markdown renderings of the same result differ")
 	}
 	first, err := RenderMatrixJSON(res)
