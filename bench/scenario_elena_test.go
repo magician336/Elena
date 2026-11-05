@@ -243,15 +243,22 @@ func TestRunPointInTimeRejectsInvalidSpec(t *testing.T) {
 }
 
 // TestRunTTLMix drives the append + TTL-expiry scenario load at smoke
-// size and pins the phase shape: per generation one append phase and
-// one recreate phase, then one final protected-read phase. The expiry,
-// sweep, and merge chain is verified inside the run — a completed run
-// is the evidence it happened.
+// size across four generations — three generation transitions, each a
+// spot where the previous generation's recreated sessions expire
+// shortly before the current generation's timed sessions — and pins
+// the phase shape: per generation one append phase and one recreate
+// phase, then one final protected-read phase. The expiry, sweep, and
+// merge chain is verified inside the run against the generation's own
+// sessions, so a completed run is the evidence it happened on every
+// generation, on any disk timing: the reclamation wait is bound to the
+// generation's known byte identity, not to a merge count another
+// population could satisfy. The TTL carries enough margin over the
+// append phase for disks far slower than the development machine's.
 func TestRunTTLMix(t *testing.T) {
 	dir := t.TempDir()
 	res, err := RunTTLMix(dir, TTLMixSpec{
-		Generations: 2, SessionsPerGen: 2, EventsPerSession: 2,
-		ValueSize: 32, TTL: 60 * time.Millisecond, SweepPeriod: 15 * time.Millisecond,
+		Generations: 4, SessionsPerGen: 2, EventsPerSession: 2,
+		ValueSize: 32, TTL: 250 * time.Millisecond, SweepPeriod: 25 * time.Millisecond,
 	})
 	if err != nil {
 		t.Fatalf("RunTTLMix: %v", err)
@@ -259,10 +266,16 @@ func TestRunTTLMix(t *testing.T) {
 	if res.Driver != "elena" || res.Workload != "elena-ttl-mix" {
 		t.Fatalf("driver/workload = %q/%q, want elena/elena-ttl-mix", res.Driver, res.Workload)
 	}
-	if len(res.Phases) != 5 {
-		t.Fatalf("phases = %d, want 5 (append+recreate per generation, plus protected read)", len(res.Phases))
+	if len(res.Phases) != 9 {
+		t.Fatalf("phases = %d, want 9 (append+recreate per generation, plus protected read)", len(res.Phases))
 	}
-	wantNames := []string{"ttl-append-g0", "ttl-recreate-g0", "ttl-append-g1", "ttl-recreate-g1", "ttl-protected-read"}
+	wantNames := []string{
+		"ttl-append-g0", "ttl-recreate-g0",
+		"ttl-append-g1", "ttl-recreate-g1",
+		"ttl-append-g2", "ttl-recreate-g2",
+		"ttl-append-g3", "ttl-recreate-g3",
+		"ttl-protected-read",
+	}
 	for i, want := range wantNames {
 		if res.Phases[i].Phase != want {
 			t.Errorf("phase %d = %q, want %q", i, res.Phases[i].Phase, want)
@@ -280,8 +293,8 @@ func TestRunTTLMix(t *testing.T) {
 		t.Errorf("ttl-recreate-g0 ops = %d, want 4", res.Phases[1].Ops)
 	}
 	// Protected read: every event of the surviving trajectory.
-	if res.Phases[4].Ops != 4 {
-		t.Errorf("ttl-protected-read ops = %d, want 4", res.Phases[4].Ops)
+	if res.Phases[8].Ops != 8 {
+		t.Errorf("ttl-protected-read ops = %d, want 8", res.Phases[8].Ops)
 	}
 
 	// The protected trajectory survived every merge: reopen shows all
@@ -299,8 +312,8 @@ func TestRunTTLMix(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Events protected: %v", err)
 	}
-	if len(events) != 4 {
-		t.Fatalf("protected trajectory holds %d events after reopen, want 4", len(events))
+	if len(events) != 8 {
+		t.Fatalf("protected trajectory holds %d events after reopen, want 8", len(events))
 	}
 }
 
