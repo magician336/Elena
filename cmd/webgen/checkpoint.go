@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	"elena"
+	"github.com/magician336/elena"
 )
 
 // The checkpoint story's fixed script: the payloads are constants —

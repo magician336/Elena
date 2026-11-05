@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"elena/internal/engine"
+	"github.com/magician336/elena/internal/engine"
 )
 
 // Delete must remove the key from the reader's point of view: Get

@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"elena"
+	"github.com/magician336/elena"
 )
 
 // TestComputeIndexMemoryDerivesBytesPerEntry pins the figure's basis:

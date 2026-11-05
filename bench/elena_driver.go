@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"elena"
+	"github.com/magician336/elena"
 )
 
 // elenaNamespace is the one namespace the elena driver writes: every

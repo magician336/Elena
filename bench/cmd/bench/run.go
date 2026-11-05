@@ -12,7 +12,7 @@ import (
 	"os"
 	"time"
 
-	"elena/bench"
+	"github.com/magician336/elena/bench"
 )
 
 // defaultOps and defaultValueSize are the micro workload's defaults:

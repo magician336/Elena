@@ -8,7 +8,7 @@ import (
 	"os"
 	"time"
 
-	"elena/bench"
+	"github.com/magician336/elena/bench"
 )
 
 // usageText is the public help surface. Every line leads with a system

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"elena"
+	"github.com/magician336/elena"
 )
 
 // WriteAmplificationBasis is the accounting declaration that ships

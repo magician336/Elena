@@ -6,7 +6,7 @@ import (
 	"sort"
 	"time"
 
-	"elena/internal/engine"
+	"github.com/magician336/elena/internal/engine"
 )
 
 // SessionInfo describes one live session of a namespace: its ID within

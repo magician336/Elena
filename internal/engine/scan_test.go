@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"elena/internal/engine"
+	"github.com/magician336/elena/internal/engine"
 )
 
 // scanAll runs a Scan with opts and returns the visited keys in visit

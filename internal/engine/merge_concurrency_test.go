@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"elena/internal/engine"
+	"github.com/magician336/elena/internal/engine"
 )
 
 // Merge must be invisible to concurrent readers and must not stop the

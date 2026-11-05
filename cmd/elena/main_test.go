@@ -7,7 +7,7 @@ import (
 	"os"
 	"testing"
 
-	"elena"
+	"github.com/magician336/elena"
 )
 
 // TestMain is the reexec entry of the CLI's full-cycle harness, in the

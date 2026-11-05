@@ -4,7 +4,7 @@ import (
 	"slices"
 	"testing"
 
-	"elena"
+	"github.com/magician336/elena"
 )
 
 // trajectoryVocabulary is the fixed pool the seeded selection draws

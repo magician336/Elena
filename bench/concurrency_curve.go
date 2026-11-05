@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"elena"
+	"github.com/magician336/elena"
 )
 
 // curveNamespace is the one namespace the concurrency curve drives:

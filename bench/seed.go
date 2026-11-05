@@ -3,7 +3,7 @@ package bench
 import (
 	"fmt"
 
-	"elena"
+	"github.com/magician336/elena"
 )
 
 // seedStore seeds the focused-metric scenarios' shared dataset shape:

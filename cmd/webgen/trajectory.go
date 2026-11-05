@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 
-	"elena"
+	"github.com/magician336/elena"
 )
 
 // eventVocabulary is the fixed pool the seed draws the trajectory

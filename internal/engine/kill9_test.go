@@ -7,7 +7,7 @@ import (
 	"errors"
 	"testing"
 
-	"elena/internal/engine"
+	"github.com/magician336/elena/internal/engine"
 )
 
 // The kill -9 scenarios prove the engine's headline claim — "an

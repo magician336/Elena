@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"elena"
+	"github.com/magician336/elena"
 )
 
 // closeStore closes st and reports any failure through t. A nil st is

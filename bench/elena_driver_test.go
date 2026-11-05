@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"elena"
+	"github.com/magician336/elena"
 )
 
 // TestElenaDriverName pins the report name.

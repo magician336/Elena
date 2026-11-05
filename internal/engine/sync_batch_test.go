@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"elena/internal/engine"
+	"github.com/magician336/elena/internal/engine"
 )
 
 // Batch semantics must not move with the sync policy: under every tier

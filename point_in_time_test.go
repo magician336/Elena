@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"elena"
+	"github.com/magician336/elena"
 )
 
 // A session whose TTL has elapsed reads as if never written, so its

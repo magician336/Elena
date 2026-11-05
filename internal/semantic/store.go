@@ -13,7 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"elena/internal/engine"
+	"github.com/magician336/elena/internal/engine"
 )
 
 // ErrDirectoryLocked is returned by Open when the target directory is

@@ -7,7 +7,7 @@ import (
 	"math"
 	"time"
 
-	"elena/internal/engine"
+	"github.com/magician336/elena/internal/engine"
 )
 
 // The session metadata entry: a version byte plus a lifecycle form

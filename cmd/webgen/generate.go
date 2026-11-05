@@ -6,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	"elena"
+	"github.com/magician336/elena"
 )
 
 // Meta records how the page data was produced, so anyone can

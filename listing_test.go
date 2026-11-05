@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"elena"
+	"github.com/magician336/elena"
 )
 
 // listNamespaces returns the store's namespaces and fails the test on

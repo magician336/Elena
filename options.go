@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"elena/internal/semantic"
+	"github.com/magician336/elena/internal/semantic"
 )
 
 // DefaultSweepPeriod is the period of the background sweep when Open is

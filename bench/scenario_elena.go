@@ -7,7 +7,7 @@ import (
 	"math/rand/v2"
 	"time"
 
-	"elena"
+	"github.com/magician336/elena"
 )
 
 // scenarioSessionName renders one scenario session's name: the scenario

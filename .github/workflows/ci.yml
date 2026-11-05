@@ -1,8 +1,11 @@
 name: CI
 
 on:
+  # Development lands on main through pull requests, so push runs only
+  # need main (engine-core and semantic-layer were the integration
+  # branches of the first two specs and no longer exist).
   push:
-    branches: [main, engine-core, semantic-layer]
+    branches: [main]
   pull_request:
 
 permissions:

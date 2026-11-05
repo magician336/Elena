@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"elena/bench"
+	"github.com/magician336/elena/bench"
 )
 
 // defaults of the declared matrix: YCSB's zipfian key distribution and

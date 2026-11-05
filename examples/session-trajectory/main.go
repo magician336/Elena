@@ -16,7 +16,7 @@ import (
 	"os"
 	"time"
 
-	"elena"
+	"github.com/magician336/elena"
 )
 
 // Store directory and stdout wiring for run: -dir overrides the default

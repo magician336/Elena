@@ -3,7 +3,7 @@ package elena
 import (
 	"time"
 
-	"elena/internal/semantic"
+	"github.com/magician336/elena/internal/semantic"
 )
 
 // ErrCheckpointNotFound is wrapped into the error Restore returns when
