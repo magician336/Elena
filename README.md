@@ -1,5 +1,9 @@
 # Elena
 
+[![CI](https://github.com/magician336/Elena/actions/workflows/ci.yml/badge.svg)](https://github.com/magician336/Elena/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/magician336/elena.svg)](https://pkg.go.dev/github.com/magician336/elena)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
 **Append-only embedded storage engine in the Bitcask model, written in pure
 Go — fsync tiers, merge, and kill -9 recovery in CI, plus trajectory,
 session-TTL, and checkpoint semantics for durable agent state.**
