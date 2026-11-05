@@ -1,0 +1,26 @@
+{
+  "scenario": "curve",
+  "driver": "elena",
+  "workload": "elena-concurrency-curve",
+  "sync_tier": "sync-none",
+  "points": [
+    {
+      "concurrency": 1,
+      "ops": 4096,
+      "elapsed_ns": 20480000,
+      "throughput_ops_sec": 200000.0,
+      "p50_ns": 2393,
+      "p99_ns": 11386,
+      "p999_ns": 37274
+    },
+    {
+      "concurrency": 2,
+      "ops": 8192,
+      "elapsed_ns": 68266666,
+      "throughput_ops_sec": 120000.0,
+      "p50_ns": 4603,
+      "p99_ns": 117951,
+      "p999_ns": 308705
+    }
+  ]
+}
