@@ -48,12 +48,6 @@ func New(opener StoreOpener) (*Server, error) {
 	return s, nil
 }
 
-// SDK returns the underlying SDK server, for hosts and tests that
-// connect their own transport.
-func (s *Server) SDK() *sdk.Server {
-	return s.sdk
-}
-
 // Serve runs the server over t until ctx is done. A stdio server is
 // Serve(ctx, &sdk.StdioTransport{}); the transport is a parameter so
 // the byte path is injectable in tests.
