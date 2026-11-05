@@ -86,3 +86,28 @@ jobs:
           go run ./cmd/bench --driver badger --ops 50 --value-size 256 --dir "${RUNNER_TEMP}/bench-smoke-badger"
           go run ./cmd/bench --driver rosedb --ops 50 --value-size 256 --dir "${RUNNER_TEMP}/bench-smoke-rosedb"
           go run ./cmd/matrix --engines elena,bbolt,badger,rosedb --mixes a --values 64 --keys 8 --run-ops 8 --sync-period 5ms --root "${RUNNER_TEMP}/matrix-smoke"
+
+  mcp:
+    name: MCP module (race tests + coverage gate)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mcp
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+          cache-dependency-path: mcp/go.sum
+      - name: Lint mcp module
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: latest
+          working-directory: mcp
+      - name: Run mcp module tests (race, coverage gate >= 80%)
+        run: |
+          go test -race -covermode=atomic -coverprofile=coverage.out ./...
+          go tool cover -func=coverage.out
+          total="$(go tool cover -func=coverage.out | awk '/^total:/ { gsub(/%/, "", $3); print $3 }')"
+          echo "MCP coverage: ${total}%"
+          awk -v c="$total" 'BEGIN { if (c < 80) { printf "mcp coverage %.1f%% is below the 80%% gate\n", c; exit 1 } }'
