@@ -30,8 +30,8 @@ func (silentLogger) Debugf(string, ...any)   {}
 // the group-commit tier produces no badger numbers. Reads run in read
 // transactions, which never sync.
 type badgerDriver struct {
-	db        *badger.DB
-	latestLen map[uint64]int // key → payload length of its latest acknowledged set
+	db    *badger.DB
+	reads readLedger[int] // key → payload length of its latest acknowledged set
 }
 
 // Name identifies the driver in reports.
@@ -48,7 +48,7 @@ func (d *badgerDriver) Open(dir string) error {
 		return err
 	}
 	d.db = db
-	d.latestLen = map[uint64]int{}
+	d.reads = newReadLedger[int]()
 	return nil
 }
 
@@ -66,12 +66,12 @@ func (d *badgerDriver) Do(op Op) error {
 		if err != nil {
 			return err
 		}
-		d.latestLen[op.Key] = len(op.Value)
+		d.reads.record(op.Key, len(op.Value))
 		return nil
 	case OpRead:
-		wantLen, ok := d.latestLen[op.Key]
-		if !ok {
-			return fmt.Errorf("read of key %d with no acknowledged append", op.Key)
+		wantLen, err := d.reads.expect(op.Key)
+		if err != nil {
+			return err
 		}
 		return d.db.View(func(txn *badger.Txn) error {
 			item, err := txn.Get(kvKey(op.Key))
@@ -79,10 +79,7 @@ func (d *badgerDriver) Do(op Op) error {
 				return fmt.Errorf("get key %d: %w", op.Key, err)
 			}
 			return item.Value(func(value []byte) error {
-				if len(value) != wantLen {
-					return fmt.Errorf("read of key %d returned %d bytes, want %d", op.Key, len(value), wantLen)
-				}
-				return nil
+				return verifyReadLen(op.Key, value, wantLen)
 			})
 		})
 	default:

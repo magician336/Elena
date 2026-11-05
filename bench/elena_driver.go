@@ -34,9 +34,9 @@ type lastEvent struct {
 type elenaDriver struct {
 	store      *elena.Store
 	sessions   map[uint64]*elena.Session
-	latest     map[uint64]lastEvent // key → its latest acknowledged event
-	syncTier   SyncTier             // zero value SyncPerWrite = the store's default every-write sync
-	syncPeriod time.Duration        // group-commit period; read only when syncTier is SyncGroupCommit
+	reads      readLedger[lastEvent] // key → its latest acknowledged event
+	syncTier   SyncTier              // zero value SyncPerWrite = the store's default every-write sync
+	syncPeriod time.Duration         // group-commit period; read only when syncTier is SyncGroupCommit
 }
 
 // Name identifies the driver in reports.
@@ -56,7 +56,7 @@ func (d *elenaDriver) Open(dir string) error {
 	}
 	d.store = store
 	d.sessions = map[uint64]*elena.Session{}
-	d.latest = map[uint64]lastEvent{}
+	d.reads = newReadLedger[lastEvent]()
 	return nil
 }
 
@@ -77,12 +77,12 @@ func (d *elenaDriver) Do(op Op) error {
 		if err != nil {
 			return err
 		}
-		d.latest[op.Key] = lastEvent{seq: seq, payload: len(op.Value)}
+		d.reads.record(op.Key, lastEvent{seq: seq, payload: len(op.Value)})
 		return nil
 	case OpRead:
-		want, ok := d.latest[op.Key]
-		if !ok {
-			return fmt.Errorf("read of key %d with no acknowledged append", op.Key)
+		want, err := d.reads.expect(op.Key)
+		if err != nil {
+			return err
 		}
 		sess, err := d.session(op.Key)
 		if err != nil {

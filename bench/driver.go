@@ -125,3 +125,47 @@ func kvKey(key uint64) []byte {
 	binary.BigEndian.PutUint64(buf, key)
 	return buf
 }
+
+// readLedger is the shared bookkeeping behind every driver's read
+// verification: each acknowledged append records what its key wrote,
+// and each read asks for that expectation before fetching bytes. The
+// KV drivers carry the payload length; the elena driver carries the
+// acknowledged (sequence, length) pair. A read of a key with nothing
+// acknowledged fails through expect's one wording, shared by every
+// driver, instead of passing silently.
+type readLedger[T any] struct {
+	latest map[uint64]T
+}
+
+// newReadLedger returns a ledger with nothing acknowledged yet.
+func newReadLedger[T any]() readLedger[T] {
+	return readLedger[T]{latest: map[uint64]T{}}
+}
+
+// record notes what key's latest acknowledged append wrote.
+func (l readLedger[T]) record(key uint64, what T) {
+	l.latest[key] = what
+}
+
+// expect returns what key's next read must verify against — the
+// payload length for the KV drivers, the acknowledged event for the
+// elena driver — or the shared error for a key with no acknowledged
+// append.
+func (l readLedger[T]) expect(key uint64) (T, error) {
+	want, ok := l.latest[key]
+	if !ok {
+		var zero T
+		return zero, fmt.Errorf("read of key %d with no acknowledged append", key)
+	}
+	return want, nil
+}
+
+// verifyReadLen checks a KV read-back's payload length against the
+// expected one with the shared wording: a read that misses the newest
+// value's size fails the run instead of passing silently.
+func verifyReadLen(key uint64, got []byte, want int) error {
+	if len(got) != want {
+		return fmt.Errorf("read of key %d returned %d bytes, want %d", key, len(got), want)
+	}
+	return nil
+}
