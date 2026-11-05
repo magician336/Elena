@@ -34,6 +34,10 @@ func (s *Server) registerTools() {
 		Name:        "restore_checkpoint",
 		Description: "Restore one checkpoint by ID: the runtime view — every trajectory's sequence counter and the session table — resets to the recorded baseline, and appends afterwards continue from the baseline's sequence numbers. Events appended past the baseline stay on disk and stay visible to full reads; the restore touches no data. An unknown ID changes nothing and fails.",
 	}, s.restoreCheckpoint)
+	mcpAddTool(s.sdk, &sdk.Tool{
+		Name:        "stats",
+		Description: "Read the store's observables: entry counts, byte counters, the dead-data ratio a merge can reclaim, write amplification, and the per-file view. The figures are the storage engine's own, forwarded unchanged; reading them observes the store without changing it.",
+	}, s.stats)
 }
 
 // createCheckpointIn is the create_checkpoint argument schema; the
@@ -229,6 +233,74 @@ func (s *Server) storedDeadline(namespace, session string) (*time.Time, error) {
 		return &d, nil
 	}
 	return nil, fmt.Errorf("session %s/%s absent from the namespace listing", namespace, session)
+}
+
+// statsIn is the stats argument schema; the observables cover the whole
+// store, so the call takes no arguments.
+type statsIn struct{}
+
+// fileStatsOut is one data file of stats's per-file view.
+type fileStatsOut struct {
+	FileID    uint32 `json:"file_id" jsonschema:"the file's monotonic ID"`
+	SizeBytes int64  `json:"size_bytes" jsonschema:"the file's size in bytes"`
+	Entries   uint64 `json:"entries" jsonschema:"the encoded entries the file holds, live and dead alike"`
+	Active    bool   `json:"active" jsonschema:"whether this file currently receives appends"`
+}
+
+// statsOut is the stats output schema, mirroring the library's Stats
+// one field at a time.
+type statsOut struct {
+	LiveEntries        uint64         `json:"live_entries"`
+	DeadEntries        uint64         `json:"dead_entries"`
+	LiveBytes          uint64         `json:"live_bytes"`
+	DataBytes          uint64         `json:"data_bytes"`
+	DeadBytes          uint64         `json:"dead_bytes"`
+	DeadRatio          float64        `json:"dead_ratio"`
+	IndexMemoryBytes   uint64         `json:"index_memory_bytes"`
+	BytesWritten       uint64         `json:"bytes_written"`
+	BytesFlushed       uint64         `json:"bytes_flushed"`
+	WriteAmplification float64        `json:"write_amplification"`
+	OpsPut             uint64         `json:"ops_put"`
+	OpsPutWithTTL      uint64         `json:"ops_put_with_ttl"`
+	OpsDelete          uint64         `json:"ops_delete"`
+	OpsGet             uint64         `json:"ops_get"`
+	OpsScan            uint64         `json:"ops_scan"`
+	OpsMerge           uint64         `json:"ops_merge"`
+	Files              []fileStatsOut `json:"files"`
+}
+
+// stats forwards the engine's observables unchanged — reading Stats
+// observes the store, it never changes it.
+func (s *Server) stats(_ context.Context, _ *sdk.CallToolRequest, _ statsIn) (*sdk.CallToolResult, statsOut, error) {
+	st := s.store.Stats()
+	out := statsOut{
+		LiveEntries:        st.LiveEntries,
+		DeadEntries:        st.DeadEntries,
+		LiveBytes:          st.LiveBytes,
+		DataBytes:          st.DataBytes,
+		DeadBytes:          st.DeadBytes,
+		DeadRatio:          st.DeadRatio,
+		IndexMemoryBytes:   st.IndexMemoryBytes,
+		BytesWritten:       st.BytesWritten,
+		BytesFlushed:       st.BytesFlushed,
+		WriteAmplification: st.WriteAmplification,
+		OpsPut:             st.OpsPut,
+		OpsPutWithTTL:      st.OpsPutWithTTL,
+		OpsDelete:          st.OpsDelete,
+		OpsGet:             st.OpsGet,
+		OpsScan:            st.OpsScan,
+		OpsMerge:           st.OpsMerge,
+		Files:              make([]fileStatsOut, 0, len(st.Files)),
+	}
+	for _, f := range st.Files {
+		out.Files = append(out.Files, fileStatsOut{
+			FileID:    f.FileID,
+			SizeBytes: f.SizeBytes,
+			Entries:   f.Entries,
+			Active:    f.Active,
+		})
+	}
+	return nil, out, nil
 }
 
 // mcpAddTool wraps the SDK's generic AddTool so each handler above
